@@ -12,7 +12,7 @@
 
 </div>
 
-This repository provides tools for optimizing SQL query execution plans using LLM-driven evolutionary sampling. For SQL queries, obtains and modifies their physical execution plans, benchmarks them, and transfers optimizations across dataset scale factors - all orchestrated through a Python API backed by [Modal](https://modal.com) cloud sandboxes and a patched [DataFusion](https://datafusion.apache.org/) engine.
+This repository provides tools for optimizing SQL query execution plans using LLM-driven evolutionary sampling. For SQL queries, it obtains and modifies physical execution plans, benchmarks them, and transfers optimizations across dataset scale factors, all orchestrated through a Python API backed by [Modal](https://modal.com) cloud sandboxes and a patched [DataFusion](https://datafusion.apache.org/) engine.
 
 <div align="center">
     <img src="assets/harness_pipeline.svg" alt="Pipeline Overview" width="95%"/>
@@ -24,7 +24,7 @@ This repository provides tools for optimizing SQL query execution plans using LL
     <img src="assets/architecture_overview.svg" alt="Architecture Overview" width="95%"/>
 </div>
 
-The **Python API** runs on your machine and orchestrates the entire pipeline. **Modal sandboxes** run the patched DataFusion engine (built from the `datafusion_patched/` directory in this repo) inside ephemeral cloud containers — they plan, execute, and benchmark queries, writing results to **S3**. The **LLM** proposes execution-plan optimizations as JSON Patch operations, which the API validates by sending patched plans back to Modal.
+The **Python API** runs on your machine and orchestrates the entire pipeline. **Modal sandboxes** run the patched DataFusion engine (built from the `datafusion_patched/` directory in this repo) inside ephemeral cloud containers &mdash; they plan, execute, and benchmark queries, writing results to **S3**. The **LLM** proposes execution-plan optimizations as JSON Patch operations, which the API validates by sending patched plans back to Modal.
 
 ## Setup
 
@@ -140,7 +140,7 @@ See `notebooks/examples.ipynb` for a self-contained walkthrough that:
 - Generates synthetic SQL queries with LLMs
 - Optimizes their execution plans via evolutionary sampling
 - Transfers optimizations across dataset scale factors
-- Benchmarks at both scales and compares improvement_x side-by-side
+- Benchmarks at both scales and compares `improvement_x` side-by-side
 
 Here's a condensed version:
 
@@ -178,7 +178,7 @@ queries = gen_result.queries  # list of validated SQL strings
 
 ```python
 opt_result = optimize_queries(
-    queries=queries, # list of SQL strings
+    queries=queries,  # list of SQL strings
     dataset="tpcds",
     scale_factor=3,
     n_steps=2,
@@ -214,7 +214,7 @@ scale_result = scale_optimizations(
 
 ### 4. Benchmark Plans
 <details>
-<summary>Build benchmark plans: for each query we compare the best optimization against the base engine plan.</summary>
+<summary>Build benchmark plans: for each query, compare the best optimization against the base engine plan.</summary>
 
 ```python
 bench_plans = []
