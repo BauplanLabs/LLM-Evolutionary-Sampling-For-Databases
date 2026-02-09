@@ -12,7 +12,7 @@
 
 </div>
 
-This repository provides tools for optimizing SQL query execution plans using LLM-driven evolutionary sampling. For SQL queries, obtains and modifies their physical execution plans, benchmarks them, and transfers optimizations across dataset scale factors -- all orchestrated through a Python API backed by [Modal](https://modal.com) cloud sandboxes and a patched [DataFusion](https://datafusion.apache.org/) engine.
+This repository provides tools for optimizing SQL query execution plans using LLM-driven evolutionary sampling. For SQL queries, obtains and modifies their physical execution plans, benchmarks them, and transfers optimizations across dataset scale factors - all orchestrated through a Python API backed by [Modal](https://modal.com) cloud sandboxes and a patched [DataFusion](https://datafusion.apache.org/) engine.
 
 <div align="center">
     <img src="assets/harness_pipeline.svg" alt="Pipeline Overview" width="95%"/>
