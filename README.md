@@ -50,6 +50,9 @@ The **Python API** runs on your machine and orchestrates the entire pipeline. **
 
 ## Setup
 
+<details>
+<summary>Show Python environment and env file setup</summary>
+
 ### Python Environment
 
 Python 3.10 or higher is required. Install dependencies with [uv](https://docs.astral.sh/uv/):
@@ -68,6 +71,8 @@ cp local.env .env
 ```
 
 `local.env` lists all required environment variables with placeholder values. `.env` is gitignored.
+
+</details>
 
 ### AWS S3 Setup
 
