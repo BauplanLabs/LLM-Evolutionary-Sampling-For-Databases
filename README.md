@@ -1,6 +1,6 @@
 <div align="center">
 
-# Making Databases Faster with LLM Evolutionary Sampling
+# ⚡ Making Databases Faster with LLM Evolutionary Sampling
 
 [![arXiv](https://img.shields.io/badge/arXiv-XXXX.XXXXX-b31b1b.svg?style=flat&logo=arxiv)](https://arxiv.org/abs/XXXX.XXXXX) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
 
@@ -12,11 +12,33 @@
 
 </div>
 
-This repository provides tools for optimizing SQL query execution plans using LLM-driven evolutionary sampling. For SQL queries, it obtains and modifies physical execution plans, benchmarks them, and transfers optimizations across dataset scale factors, all orchestrated through a Python API backed by [Modal](https://modal.com) cloud sandboxes and a patched [DataFusion](https://datafusion.apache.org/) engine.
-
 <div align="center">
     <img src="assets/harness_pipeline.svg" alt="Pipeline Overview" width="95%"/>
 </div>
+
+This repository provides tools for optimizing SQL query execution plans using LLM-driven evolutionary sampling. For SQL queries, it obtains and modifies physical execution plans, benchmarks them, and transfers optimizations across dataset scale factors, all orchestrated through a Python API backed by [Modal](https://modal.com) cloud sandboxes and a patched [DataFusion](https://datafusion.apache.org/) engine.
+
+## Quick Example
+
+```python
+from api import optimize_queries
+
+QUERY = "SELECT * FROM ... WHERE ... ORDER BY ..."
+
+opt_result = optimize_queries(
+    queries=[QUERY],
+    dataset="tpcds",
+    scale_factor=3,
+    n_steps=2,
+    n_samples_per_step=5,
+    top_k_patches=1,
+    n_runs=5,
+)
+
+single_plan = opt_result.optimization_outcome[0]
+best_patch = single_plan.patch[0]
+summary = opt_result.summary
+```
 
 ## Architecture Overview
 
@@ -48,6 +70,9 @@ cp local.env .env
 `local.env` lists all required environment variables with placeholder values. `.env` is gitignored.
 
 ### AWS S3 Setup
+
+<details>
+<summary>Show AWS S3 setup steps</summary>
 
 Modal sandboxes write results to S3, and the local client retrieves them. Create your own S3 bucket with any name you choose.
 
@@ -98,7 +123,12 @@ Modal sandboxes write results to S3, and the local client retrieves them. Create
      AWS_SECRET_ACCESS_KEY=your_secret_access_key_here
      ```
 
+</details>
+
 ### Modal Setup
+
+<details>
+<summary>Show Modal setup steps</summary>
 
 Create a [Modal](https://modal.com) account and authenticate:
 
@@ -121,7 +151,12 @@ Next, create a Modal secret for AWS on the [Modal dashboard](https://modal.com/s
 
 Note: the secret name `s3-aws-credentials` in Modal must match `AWS_SECRET_NAME` in `src/modal_controller/constants.py`.
 
+</details>
+
 ### LLM Setup
+
+<details>
+<summary>Show LLM setup steps</summary>
 
 This project uses [LiteLLM](https://docs.litellm.ai/) for LLM inference. Add your LLM API key to `.env`. This project uses GPT-5 by default:
 
@@ -130,6 +165,8 @@ OPENAI_API_KEY=your_openai_api_key_here
 ```
 
 For other providers, check the [LiteLLM documentation](https://docs.litellm.ai/).
+
+</details>
 
 ---
 
