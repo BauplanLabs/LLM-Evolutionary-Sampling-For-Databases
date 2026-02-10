@@ -1,3 +1,9 @@
+"""Fetch dataset table schemas (and optional sample rows) and persist to S3.
+
+Scans parquet files under ``DATA_FOLDER`` and writes either ``{"tables": ...}``
+or an ``error`` payload under ``fetch_schema-results/<UUID>.json``.
+"""
+
 import os
 import pyarrow.parquet as pq
 import boto3

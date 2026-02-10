@@ -320,7 +320,7 @@ def evaluate_plan_n_runs(
     operation: Operation,
     plan_json: str,
     data_folder: str,
-    n_runs: int = 0,
+    n_runs: int = 1,
     max_eval_workers: int = 8,
     runner_kwargs: dict | None = None,
     **kwargs

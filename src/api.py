@@ -761,7 +761,8 @@ def optimize_queries(
         validation_failures. optimization_outcome/metadata are None on early exit.
 
     Run-dir behavior:
-        queries + run_dir: resume must be False; overwrites if confirmed.
+        queries + run_dir: resume must be False; if run_dir exists, raises
+            FileExistsError.
         queries only: creates a new timestamped run_dir.
         run_dir only: resume must be True; loads queries from result.json.
         neither: raises ValueError.

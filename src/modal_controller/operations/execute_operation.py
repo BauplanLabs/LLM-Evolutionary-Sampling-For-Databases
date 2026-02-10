@@ -1,3 +1,10 @@
+"""Execute a serialized physical plan and persist execution output to S3.
+
+Reads plan JSON from ``/tmp/input_data.txt``, executes it via ``DataFusionDB``,
+and writes either execution time + schema of the results + result data or an 
+``error`` payload under ``execute-results/<UUID>.json``.
+"""
+
 import boto3
 import json
 
@@ -26,7 +33,6 @@ try:
         "execution_time": execution_time,
         "result_data": results.data.to_pandas().to_json(), 
         "schema": str(results.data.schema),
-        "plan_size_chars": len(plan_json)
     }
 
 except Exception as e:

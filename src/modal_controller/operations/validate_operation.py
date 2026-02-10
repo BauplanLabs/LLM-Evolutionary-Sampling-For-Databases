@@ -1,3 +1,10 @@
+"""Validate a SQL query (syntax, planability, executability) and persist to S3.
+
+Reads SQL text from ``/tmp/input_data.txt`` and writes a validation payload
+(``is_syntax_valid``, ``plan``, ``can_run``, ``row_count``, ``is_empty``,
+``execution_time``) or an ``error`` under ``validate-results/<UUID>.json``.
+"""
+
 import boto3
 import json
 

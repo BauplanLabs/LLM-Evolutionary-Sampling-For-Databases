@@ -1,3 +1,9 @@
+"""Serialize a SQL query into a succinct physical plan and persist to S3.
+
+Reads SQL text from ``/tmp/input_data.txt`` and writes either ``{"plan", "query"}``
+or an ``error`` payload under ``plan-results/<UUID>.json``.
+"""
+
 import boto3
 import json
 

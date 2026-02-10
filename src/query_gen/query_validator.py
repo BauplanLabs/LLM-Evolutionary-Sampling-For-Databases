@@ -15,9 +15,12 @@ class ValidationResult:
     """Result of validating a single SQL query on Modal.
 
     Attributes:
-        error: Error string if validation failed, else None.
+        error: Infrastructure/runtime error string, else None. This captures also the
+            failures in the validation flow itself (for example Modal/S3
+            failures or determinism-check execution failures).
         is_syntax_valid: Query parses successfully.
-        plan: Physical execution plan JSON (None if syntax invalid).
+        plan: Physical execution plan JSON when planning succeeds. May be
+            None for syntax-invalid queries or planning failures.
         can_run: Query executes without errors.
         is_empty: Query returns zero rows.
         row_count: Number of result rows.

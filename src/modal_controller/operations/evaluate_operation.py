@@ -1,3 +1,10 @@
+"""Benchmark a serialized plan execution and persist aggregated metrics to S3.
+
+Reads plan JSON from ``/tmp/input_data.txt``, executes once, and writes
+``execution_time`` plus optional detailed metrics (when ``FULL_METRICS`` is
+enabled) or an ``error`` payload under ``evaluation-results/<UUID>.json``.
+"""
+
 import boto3
 import json
 import re
