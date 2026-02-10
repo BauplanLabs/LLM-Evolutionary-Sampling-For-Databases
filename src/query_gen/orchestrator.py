@@ -8,8 +8,8 @@ from typing import Any, Dict, List, Optional, Union
 
 from openai import OpenAI
 
-from api_types import QueryGenerationResult
-from api_utils import log_line, normalize_config, resolve_run_dir, write_json, data_folder_for_dataset
+from dbplanbench_types import QueryGenerationResult
+from dbplanbench_utils import log_line, normalize_config, resolve_run_dir, write_json, data_folder_for_dataset
 from modal_controller.modal_runner import Operation
 from modal_controller.utils import submit_run_operation
 from query_gen import prompts as query_prompts

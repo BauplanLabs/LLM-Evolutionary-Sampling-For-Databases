@@ -1,6 +1,6 @@
 # API Reference
 
-All public functions are exported from `api.py`. Return types are dataclasses defined in `api_types.py`.
+All public functions are exported from `dbplanbench.py`. Return types are dataclasses defined in `dbplanbench_types.py`.
 
 ---
 
@@ -364,7 +364,7 @@ Examples:
 
 ### Troubleshooting
 
-**"ModuleNotFoundError: No module named 'api'"**
+**"ModuleNotFoundError: No module named 'dbplanbench'"**
 Make sure you installed dependencies with `uv sync` from the repo root (see the main [README](../README.md)) and are running from the correct environment (`source .venv/bin/activate`).
 
 **Sandbox timeouts**

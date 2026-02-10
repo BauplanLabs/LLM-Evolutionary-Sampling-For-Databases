@@ -16,7 +16,7 @@ from modal_controller.constants import DEFAULT_SCALE_FACTOR
 from modal_controller.modal_runner import Operation
 from modal_controller.utils import submit_run_operation, validate_plan_result_set, compute_metric_stats
 from sampling.plan_scaler import transfer_plan
-from api_types import (
+from dbplanbench_types import (
     QueryGenerationResult,
     PatchedPlan,
     OptimizationResult,
@@ -26,7 +26,7 @@ from api_types import (
     QueryValidationResult,
     Patch,
 )
-from api_utils import (
+from dbplanbench_utils import (
     write_json,
     resolve_run_dir,
     get_evaluation_stats,

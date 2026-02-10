@@ -9,7 +9,7 @@ from tqdm import tqdm
 from dataclasses import dataclass
 from sampling.sql_optimization_prompts import SYSTEM_PROMPT, create_user_prompt
 from sampling.utils import extract_patches_from_response
-from api_utils import log_line
+from dbplanbench_utils import log_line
 
 @dataclass
 class GenerationResult:

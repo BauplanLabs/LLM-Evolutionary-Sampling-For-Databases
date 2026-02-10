@@ -2,7 +2,7 @@ from typing import Optional
 from pathlib import Path
 import json
 from datetime import datetime
-from api_utils import log_line, write_json, get_metric_value
+from dbplanbench_utils import log_line, write_json, get_metric_value
 
 def filter_evaluation_queries(
     input_file: str,

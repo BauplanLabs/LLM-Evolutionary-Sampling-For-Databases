@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from modal_controller.modal_runner import Operation
 from modal_controller.utils import evaluate_plan_n_runs, validate_plan_result_set
-from api_utils import write_json, log_line, data_folder_for_dataset, plan_to_json
+from dbplanbench_utils import write_json, log_line, data_folder_for_dataset, plan_to_json
 from sampling.utils import apply_patches_to_plan
 
 def evaluate_sampled_plans(

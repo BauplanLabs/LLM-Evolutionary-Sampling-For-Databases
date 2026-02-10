@@ -13,8 +13,8 @@ from typing import Any, Dict
 
 import pytest
 
-from api import get_engine_plans, benchmark_plans, benchmark_queries, validate_queries
-from api_types import PatchedPlan, PlanningResult, BenchmarkResult, QueryValidationResult
+from dbplanbench import get_engine_plans, benchmark_plans, benchmark_queries, validate_queries
+from dbplanbench_types import PatchedPlan, PlanningResult, BenchmarkResult, QueryValidationResult
 from modal_controller.utils import METRIC_STAT_KEYS
 
 # ---------------------------------------------------------------------------
@@ -481,22 +481,22 @@ class TestAPIInputValidation:
 
 class TestOptimizeQueriesValidation:
     def test_string_queries_raises(self):
-        from api import optimize_queries
+        from dbplanbench import optimize_queries
         with pytest.raises(ValueError, match="sequence of strings"):
             optimize_queries(queries="SELECT 1", dataset=DATASET)
 
     def test_no_queries_no_run_dir_raises(self):
-        from api import optimize_queries
+        from dbplanbench import optimize_queries
         with pytest.raises(ValueError):
             optimize_queries(queries=None, run_dir=None, dataset=DATASET)
 
     def test_negative_n_steps_raises(self):
-        from api import optimize_queries
+        from dbplanbench import optimize_queries
         with pytest.raises(ValueError, match="n_steps"):
             optimize_queries(queries=["SELECT 1"], dataset=DATASET, n_steps=-1)
 
     def test_base_plans_length_mismatch_raises(self):
-        from api import optimize_queries
+        from dbplanbench import optimize_queries
         with pytest.raises(ValueError, match="base_plans length"):
             optimize_queries(
                 queries=["SELECT 1", "SELECT 2"],
@@ -505,7 +505,7 @@ class TestOptimizeQueriesValidation:
             )
 
     def test_best_of_multi_step_raises(self):
-        from api import optimize_queries
+        from dbplanbench import optimize_queries
         with pytest.raises(ValueError, match="best_of"):
             optimize_queries(
                 queries=["SELECT 1"], dataset=DATASET,
@@ -513,7 +513,7 @@ class TestOptimizeQueriesValidation:
             )
 
     def test_existing_run_dir_no_resume_raises(self, tmp_path: Path):
-        from api import optimize_queries
+        from dbplanbench import optimize_queries
         run_dir = tmp_path / "existing_run"
         run_dir.mkdir()
         with pytest.raises(FileExistsError, match="already exists"):
@@ -529,8 +529,8 @@ class TestOptimizeQueriesValidation:
 
 class TestScaleOptimizationsValidation:
     def test_existing_run_dir_raises(self, tmp_path: Path):
-        from api import scale_optimizations
-        from api_types import PatchedPlan
+        from dbplanbench import scale_optimizations
+        from dbplanbench_types import PatchedPlan
         run_dir = tmp_path / "existing_scale_run"
         run_dir.mkdir()
         dummy_plan = PatchedPlan(
@@ -551,7 +551,7 @@ class TestScaleOptimizationsValidation:
 
 class TestGetMetricValueExtended:
     def test_new_metric_keys(self):
-        from api_utils import get_metric_value
+        from dbplanbench_utils import get_metric_value
         stats = {
             "benchmark_stats": {
                 "bytes_scanned": {"min": 100, "max": 200},
@@ -562,7 +562,7 @@ class TestGetMetricValueExtended:
         assert get_metric_value(stats, "join_time_s_sum.max") == 0.05
 
     def test_deeply_nested_missing(self):
-        from api_utils import get_metric_value
+        from dbplanbench_utils import get_metric_value
         stats = {"benchmark_stats": {"execution_time": {"min": 1.0}}}
         assert get_metric_value(stats, "execution_time.p50") is None
         assert get_metric_value(stats, "nonexistent.min") is None

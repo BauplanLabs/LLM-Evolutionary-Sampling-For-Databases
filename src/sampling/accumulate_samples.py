@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from api_utils import write_json, log_line
+from dbplanbench_utils import write_json, log_line
 
 def accumulate_samples(
     input_file: str,

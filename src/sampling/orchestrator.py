@@ -8,7 +8,7 @@ from sampling.prepare_sampling import prepare_sampling
 from sampling.sample_plans import sample_plans_from_file, SamplingStrategy, ORIGINAL_STRATEGY
 from sampling.evaluate_sampled_plans import evaluate_sampled_plans
 from sampling.accumulate_samples import accumulate_samples
-from api_utils import log_line, get_metric_value, format_metric_stats
+from dbplanbench_utils import log_line, get_metric_value, format_metric_stats
 from modal_controller.utils import compute_metric_stats
 
 

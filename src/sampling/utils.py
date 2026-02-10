@@ -3,7 +3,7 @@ import re
 from typing import Any, Dict, List, Optional
 import jsonpatch
 import json
-from api_utils import log_line
+from dbplanbench_utils import log_line
 
 def apply_patches_to_plan(original_plan: Dict[str, Any], patches: List[Dict]) -> Dict[str, Any]:
     """Apply RFC 6902 JSON Patch operations to *original_plan*'s structure.

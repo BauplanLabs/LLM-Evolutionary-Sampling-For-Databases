@@ -21,7 +21,7 @@ This repository provides tools for optimizing SQL query execution plans using LL
 ## Quick Example
 
 ```python
-from api import optimize_queries
+from dbplanbench import optimize_queries
 
 QUERY = "SELECT * FROM ... WHERE ... ORDER BY ..."
 
@@ -187,7 +187,7 @@ See `notebooks/examples.ipynb` for a self-contained walkthrough that:
 Here's a condensed version:
 
 ```python
-from api import (
+from dbplanbench import (
     generate_queries,
     optimize_queries,
     scale_optimizations,
@@ -195,7 +195,7 @@ from api import (
     benchmark_queries,
     get_engine_plans,
 )
-from api_types import PatchedPlan
+from dbplanbench_types import PatchedPlan
 ```
 
 ### 1. Generate Queries

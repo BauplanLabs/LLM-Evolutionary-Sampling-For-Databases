@@ -8,7 +8,7 @@ import random
 from modal_controller.modal_runner import Operation
 from modal_controller.constants import DEFAULT_SCALE_FACTOR
 from modal_controller.utils import submit_run_operation, validate_plan_result_set
-from api_utils import log_line, data_folder_for_dataset, plan_to_json, write_json
+from dbplanbench_utils import log_line, data_folder_for_dataset, plan_to_json, write_json
 
 @dataclass
 class ValidationResult:
