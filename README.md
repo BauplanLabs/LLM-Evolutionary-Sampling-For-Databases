@@ -2,7 +2,7 @@
 
 # ⚡ Making Databases Faster with LLM Evolutionary Sampling
 
-[![arXiv](https://img.shields.io/badge/arXiv-XXXX.XXXXX-b31b1b.svg?style=flat&logo=arxiv)](https://arxiv.org/abs/XXXX.XXXXX) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![arXiv](https://img.shields.io/badge/arXiv-2602.10387-b31b1b.svg?style=flat&logo=arxiv)](https://arxiv.org/abs/2602.10387) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
 
 **Mehmet Hamza Erol<sup>1</sup>, Xiangpeng Hao<sup>2</sup>, Federico Bianchi<sup>3</sup>, Ciro Greco<sup>4</sup>, Jacopo Tagliabue<sup>4</sup>, James Zou<sup>3 1</sup>**
 
@@ -334,10 +334,10 @@ If you find this work useful, please consider citing:
   title={Making Databases Faster with LLM Evolutionary Sampling},
   author={Erol, Mehmet Hamza and Hao, Xiangpeng and Bianchi, Federico and Greco, Ciro and Tagliabue, Jacopo and Zou, James},
   year={2026},
-  eprint={XXXX.XXXXX},
+  eprint={2602.10387},
   archivePrefix={arXiv},
   primaryClass={cs.DB},
-  url={https://arxiv.org/abs/XXXX.XXXXX},
+  url={https://arxiv.org/abs/2602.10387},
 }
 ```
 
