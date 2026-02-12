@@ -1,4 +1,4 @@
-"""Tests for the extracted helper functions in api.py."""
+"""Tests for the extracted helper functions in dbplanbench.py."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from api_types import PatchedPlan, OptimizationResult, PlanningResult
+from dbplanbench_types import PatchedPlan, OptimizationResult, PlanningResult
 
 
 # ---------------------------------------------------------------------------
@@ -18,7 +18,7 @@ from api_types import PatchedPlan, OptimizationResult, PlanningResult
 
 class TestBuildEarlyExitResult:
     def _call(self, tmp_path: Path, failures: List[Optional[str]], **kwargs):
-        from api import _build_early_exit_result
+        from dbplanbench import _build_early_exit_result
 
         defaults = dict(
             message="Validation failed",
@@ -83,9 +83,9 @@ class TestBuildEarlyExitResult:
 # ---------------------------------------------------------------------------
 
 class TestPlanQueriesWithDedup:
-    @patch("api.get_engine_plans")
+    @patch("dbplanbench.get_engine_plans")
     def test_no_duplicates(self, mock_gep):
-        from api import _plan_queries_with_dedup
+        from dbplanbench import _plan_queries_with_dedup
 
         mock_gep.return_value = PlanningResult(
             plans=[{"plan": "p1"}, {"plan": "p2"}],
@@ -98,9 +98,9 @@ class TestPlanQueriesWithDedup:
         assert failures == [None, None]
         mock_gep.assert_called_once()
 
-    @patch("api.get_engine_plans")
+    @patch("dbplanbench.get_engine_plans")
     def test_all_duplicates(self, mock_gep):
-        from api import _plan_queries_with_dedup
+        from dbplanbench import _plan_queries_with_dedup
 
         plans, failures = _plan_queries_with_dedup(
             ["SELECT 1", "SELECT 1"], "tpch", 1, 4, {}
@@ -109,9 +109,9 @@ class TestPlanQueriesWithDedup:
         assert failures == ["duplicate", "duplicate"]
         mock_gep.assert_not_called()
 
-    @patch("api.get_engine_plans")
+    @patch("dbplanbench.get_engine_plans")
     def test_mixed_duplicates(self, mock_gep):
-        from api import _plan_queries_with_dedup
+        from dbplanbench import _plan_queries_with_dedup
 
         mock_gep.return_value = PlanningResult(
             plans=[{"plan": "unique"}],
@@ -128,9 +128,9 @@ class TestPlanQueriesWithDedup:
         assert failures[4] is None
         assert plans[4] == {"plan": "unique"}
 
-    @patch("api.get_engine_plans")
+    @patch("dbplanbench.get_engine_plans")
     def test_engine_error_propagated(self, mock_gep):
-        from api import _plan_queries_with_dedup
+        from dbplanbench import _plan_queries_with_dedup
 
         mock_gep.return_value = PlanningResult(
             plans=[None, {"plan": "ok"}],
@@ -144,9 +144,9 @@ class TestPlanQueriesWithDedup:
         assert plans[1] == {"plan": "ok"}
         assert failures[1] is None
 
-    @patch("api.get_engine_plans")
+    @patch("dbplanbench.get_engine_plans")
     def test_empty_queries(self, mock_gep):
-        from api import _plan_queries_with_dedup
+        from dbplanbench import _plan_queries_with_dedup
 
         plans, failures = _plan_queries_with_dedup([], "tpch", 1, 4, {})
         assert plans == []
@@ -160,7 +160,7 @@ class TestPlanQueriesWithDedup:
 
 class TestIntegrateUserBasePlans:
     def test_none_user_plans_passthrough(self):
-        from api import _integrate_user_base_plans
+        from dbplanbench import _integrate_user_base_plans
 
         engine = [{"plan": "e1"}, {"plan": "e2"}]
         plans, sources, failures = _integrate_user_base_plans(
@@ -178,7 +178,7 @@ class TestIntegrateUserBasePlans:
         assert failures is None
 
     def test_skip_validation_overwrites(self):
-        from api import _integrate_user_base_plans
+        from dbplanbench import _integrate_user_base_plans
 
         engine = [{"plan": "e1"}, {"plan": "e2"}]
         user = [{"plan": "u1"}, None]
@@ -198,7 +198,7 @@ class TestIntegrateUserBasePlans:
         assert failures is None
 
     def test_all_none_user_plans_keeps_engine(self):
-        from api import _integrate_user_base_plans
+        from dbplanbench import _integrate_user_base_plans
 
         engine = [{"plan": "e1"}]
         user = [None]
@@ -222,7 +222,7 @@ class TestIntegrateUserBasePlans:
 
 class TestValidateAndPlanQueriesResume:
     def test_resume_matching_queries(self, tmp_path: Path):
-        from api import _validate_and_plan_queries
+        from dbplanbench import _validate_and_plan_queries
 
         base_data = [{"query": "SELECT 1"}, {"query": "SELECT 2"}]
         plans, failures = _validate_and_plan_queries(
@@ -240,7 +240,7 @@ class TestValidateAndPlanQueriesResume:
         assert failures == [None, None]
 
     def test_resume_mismatched_queries(self, tmp_path: Path):
-        from api import _validate_and_plan_queries
+        from dbplanbench import _validate_and_plan_queries
 
         base_data = [{"query": "SELECT 1"}]
         with pytest.raises(ValueError, match="queries do not match"):
@@ -300,7 +300,7 @@ class TestProcessSamplingResults:
 
     @patch("sampling.sample_plans.get_upstream_patches", return_value=[{"op": "replace"}])
     def test_single_query_single_candidate(self, mock_gup):
-        from api import _process_sampling_results
+        from dbplanbench import _process_sampling_results
 
         candidates = [_make_sampled_plan("s1", metric_value=0.5)]
         query_data = self._build_query_data("SELECT 1", base_metric=1.0, candidates=candidates)
@@ -321,7 +321,7 @@ class TestProcessSamplingResults:
 
     @patch("sampling.sample_plans.get_upstream_patches", return_value=[])
     def test_improvement_ratio(self, mock_gup):
-        from api import _process_sampling_results
+        from dbplanbench import _process_sampling_results
 
         candidates = [_make_sampled_plan("s1", metric_value=0.5)]
         query_data = self._build_query_data("SELECT 1", base_metric=2.0, candidates=candidates)
@@ -342,7 +342,7 @@ class TestProcessSamplingResults:
 
     @patch("sampling.sample_plans.get_upstream_patches", return_value=[])
     def test_top_k_padding(self, mock_gup):
-        from api import _process_sampling_results
+        from dbplanbench import _process_sampling_results
 
         # Only 1 valid candidate but top_k=3
         candidates = [_make_sampled_plan("s1", metric_value=0.5)]
@@ -361,7 +361,7 @@ class TestProcessSamplingResults:
 
     @patch("sampling.sample_plans.get_upstream_patches", return_value=[])
     def test_error_categorization(self, mock_gup):
-        from api import _process_sampling_results
+        from dbplanbench import _process_sampling_results
 
         candidates = [
             _make_sampled_plan("s1", error_message="Failed to apply patches to plan: bad patch"),
@@ -387,7 +387,7 @@ class TestProcessSamplingResults:
 
     @patch("sampling.sample_plans.get_upstream_patches", return_value=[])
     def test_empty_patch_counted(self, mock_gup):
-        from api import _process_sampling_results
+        from dbplanbench import _process_sampling_results
 
         candidates = [_make_sampled_plan("s1", is_valid=True, sampled_patches=[])]
         query_data = self._build_query_data("SELECT 1", base_metric=1.0, candidates=candidates)
@@ -405,7 +405,7 @@ class TestProcessSamplingResults:
 
     @patch("sampling.sample_plans.get_upstream_patches", return_value=[])
     def test_query_to_entry_fallback(self, mock_gup):
-        from api import _process_sampling_results
+        from dbplanbench import _process_sampling_results
 
         candidates = [_make_sampled_plan("s1", metric_value=0.5)]
         query_data = self._build_query_data("SELECT 1", base_metric=1.0, candidates=candidates)
@@ -423,7 +423,7 @@ class TestProcessSamplingResults:
 
     @patch("sampling.sample_plans.get_upstream_patches", return_value=[])
     def test_missing_query_raises(self, mock_gup):
-        from api import _process_sampling_results
+        from dbplanbench import _process_sampling_results
 
         with pytest.raises(RuntimeError, match="Missing sampling data"):
             _process_sampling_results(
@@ -437,7 +437,7 @@ class TestProcessSamplingResults:
 
     @patch("sampling.sample_plans.get_upstream_patches", return_value=[])
     def test_metadata_structure(self, mock_gup):
-        from api import _process_sampling_results
+        from dbplanbench import _process_sampling_results
 
         candidates = [_make_sampled_plan("s1", metric_value=0.8)]
         query_data = self._build_query_data("SELECT 1", base_metric=1.0, candidates=candidates)
@@ -457,7 +457,7 @@ class TestProcessSamplingResults:
 
     @patch("sampling.sample_plans.get_upstream_patches", return_value=[])
     def test_multiple_queries(self, mock_gup):
-        from api import _process_sampling_results
+        from dbplanbench import _process_sampling_results
 
         qd0 = self._build_query_data("q0", base_metric=2.0, candidates=[
             _make_sampled_plan("s1", metric_value=1.0),

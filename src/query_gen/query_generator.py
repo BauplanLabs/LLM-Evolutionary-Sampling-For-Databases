@@ -4,7 +4,7 @@ from pathlib import Path
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import random
-from api_utils import log_line, write_json
+from dbplanbench_utils import log_line, write_json
 
 # Default model for query generation via OpenAI
 _DEFAULT_QUERY_GEN_MODEL = "gpt-5"

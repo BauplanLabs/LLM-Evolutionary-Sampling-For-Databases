@@ -1,4 +1,4 @@
-from .api import (
+from .dbplanbench import (
     QueryGenerationResult,
     PatchedPlan,
     OptimizationResult,
@@ -13,7 +13,7 @@ from .api import (
     scale_optimizations,
 )
 
-from .api_types import Patch, PatchSet
+from .dbplanbench_types import Patch, PatchSet
 
 __all__ = [
     "Patch",

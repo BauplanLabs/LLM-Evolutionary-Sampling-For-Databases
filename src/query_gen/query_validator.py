@@ -8,16 +8,19 @@ import random
 from modal_controller.modal_runner import Operation
 from modal_controller.constants import DEFAULT_SCALE_FACTOR
 from modal_controller.utils import submit_run_operation, validate_plan_result_set
-from api_utils import log_line, data_folder_for_dataset, plan_to_json, write_json
+from dbplanbench_utils import log_line, data_folder_for_dataset, plan_to_json, write_json
 
 @dataclass
 class ValidationResult:
     """Result of validating a single SQL query on Modal.
 
     Attributes:
-        error: Error string if validation failed, else None.
+        error: Infrastructure/runtime error string, else None. This captures also the
+            failures in the validation flow itself (for example Modal/S3
+            failures or determinism-check execution failures).
         is_syntax_valid: Query parses successfully.
-        plan: Physical execution plan JSON (None if syntax invalid).
+        plan: Physical execution plan JSON when planning succeeds. May be
+            None for syntax-invalid queries or planning failures.
         can_run: Query executes without errors.
         is_empty: Query returns zero rows.
         row_count: Number of result rows.

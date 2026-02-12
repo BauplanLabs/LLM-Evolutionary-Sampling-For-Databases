@@ -7,7 +7,7 @@ import random
 from modal_controller.modal_runner import Operation
 from modal_controller.utils import evaluate_plan_n_runs
 from pathlib import Path
-from api_utils import log_line, data_folder_for_dataset, plan_to_json, write_json, get_metric_value
+from dbplanbench_utils import log_line, data_folder_for_dataset, plan_to_json, write_json, get_metric_value
 
 
 def evaluate_validated_queries(

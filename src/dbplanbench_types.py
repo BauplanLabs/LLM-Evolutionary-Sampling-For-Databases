@@ -88,7 +88,7 @@ class ScaleResult:
 
     Attributes:
         run_dir: Directory containing result.json.
-        summary: Config, outcome rates, per-query statuses.
+        summary: Aggregate transfer config and per-outcome rates.
         queries: SQL queries (same order as inputs).
         scaled_plans: Per-query PatchedPlan at target_scale_factor. base_plan
             holds the transferred SF1 base (with SF2 succinct_table_info),
@@ -128,7 +128,7 @@ class QueryValidationResult:
             Valid plans can be fed directly to ``benchmark_plans``.
         errors: Per-query error category (None for valid queries).
             Categories: ``syntax_error``, ``no_plan``, ``cannot_run``,
-            ``empty_result``, ``nondeterministic``, or a descriptive message.
+            ``empty_result``, ``nondeterministic``, or ``validation_error``.
         summary: Aggregate validation counts (``n_queries``, ``n_valid``,
             and per-category failure counts).
     """

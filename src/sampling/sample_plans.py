@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 from sampling.gpt_plan_optimizer import GPTPlanOptimizer
 from sampling.utils import apply_patches_to_plan
-from api_utils import write_json, log_line, get_metric_value
+from dbplanbench_utils import write_json, log_line, get_metric_value
 
 @dataclass
 class SamplingStrategy:

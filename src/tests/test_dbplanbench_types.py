@@ -1,8 +1,8 @@
-"""Tests for api_types module."""
+"""Tests for dbplanbench_types module."""
 
 from __future__ import annotations
 
-from api_types import (
+from dbplanbench_types import (
     Patch,
     PatchSet,
     PatchedPlan,

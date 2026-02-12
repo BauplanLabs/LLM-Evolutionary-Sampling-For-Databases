@@ -16,7 +16,7 @@ from modal_controller.constants import DEFAULT_SCALE_FACTOR
 from modal_controller.modal_runner import Operation
 from modal_controller.utils import submit_run_operation, validate_plan_result_set, compute_metric_stats
 from sampling.plan_scaler import transfer_plan
-from api_types import (
+from dbplanbench_types import (
     QueryGenerationResult,
     PatchedPlan,
     OptimizationResult,
@@ -26,7 +26,7 @@ from api_types import (
     QueryValidationResult,
     Patch,
 )
-from api_utils import (
+from dbplanbench_utils import (
     write_json,
     resolve_run_dir,
     get_evaluation_stats,
@@ -761,7 +761,8 @@ def optimize_queries(
         validation_failures. optimization_outcome/metadata are None on early exit.
 
     Run-dir behavior:
-        queries + run_dir: resume must be False; overwrites if confirmed.
+        queries + run_dir: resume must be False; if run_dir exists, raises
+            FileExistsError.
         queries only: creates a new timestamped run_dir.
         run_dir only: resume must be True; loads queries from result.json.
         neither: raises ValueError.

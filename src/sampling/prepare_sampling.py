@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from api_utils import log_line, write_json
+from dbplanbench_utils import log_line, write_json
 
 def prepare_sampling(
     input_file: str,

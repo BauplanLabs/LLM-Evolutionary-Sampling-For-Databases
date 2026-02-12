@@ -1,4 +1,4 @@
-"""Tests for api_utils module."""
+"""Tests for dbplanbench_utils module."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from api_utils import (
+from dbplanbench_utils import (
     normalize_config,
     write_json,
     resolve_run_dir,
