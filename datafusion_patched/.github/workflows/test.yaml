@@ -1,0 +1,115 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: Python test
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.head_ref || github.sha }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  test-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.9"
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+        toolchain:
+          - "stable"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        id: rust-toolchain
+        with:
+          components: clippy,rustfmt
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '27.4'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo
+          key: cargo-cache-${{ steps.rust-toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Check Formatting
+        if: ${{ matrix.python-version == '3.10' && matrix.toolchain == 'stable' }}
+        run: cargo fmt -- --check
+
+      - name: Run Clippy
+        if: ${{ matrix.python-version == '3.10' && matrix.toolchain == 'stable' }}
+        run: cargo clippy --all-targets --all-features -- -D clippy::all -D warnings -A clippy::redundant_closure
+
+      - name: Install dependencies and build
+        uses: astral-sh/setup-uv@v6
+        with:
+            enable-cache: true
+
+      - name: Run tests
+        env:
+          RUST_BACKTRACE: 1
+        run: |
+          git submodule update --init
+          uv sync --dev --no-install-package datafusion
+          uv run --no-project maturin develop --uv
+          uv run --no-project pytest -v .
+
+      - name: FFI unit tests
+        run: |
+          cd examples/datafusion-ffi-example
+          uv run --no-project maturin develop --uv
+          uv run --no-project pytest python/tests/_test*.py
+
+      - name: Cache the generated dataset
+        id: cache-tpch-dataset
+        uses: actions/cache@v4
+        with:
+          path: benchmarks/tpch/data
+          key: tpch-data-2.18.0
+
+      - name: Run dbgen to create 1 Gb dataset
+        if: ${{ steps.cache-tpch-dataset.outputs.cache-hit != 'true' }}
+        run: |
+          cd benchmarks/tpch
+          RUN_IN_CI=TRUE ./tpch-gen.sh 1
+
+      - name: Run TPC-H examples
+        run: |
+          cd examples/tpch
+          uv run --no-project python convert_data_to_parquet.py
+          uv run --no-project pytest _tests.py
