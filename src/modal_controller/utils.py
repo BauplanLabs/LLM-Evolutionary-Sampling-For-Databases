@@ -92,58 +92,111 @@ def validate_plan_result_set(
 ) -> Optional[str]:
     """Execute *candidate_plan_str* and *baseline_plan_str* and compare result sets.
 
-    Runs the candidate plan *n_determinism_retries* times sequentially to
-    verify determinism, and compares the first run against the baseline for
-    correctness. Returns None if all comparisons match, or an error message
-    string on execution failure, result-set mismatch, or non-determinism.
-    Memory for result_data is freed after each comparison.
+    Submits 1 baseline EXECUTE + ``n_determinism_retries`` candidate EXECUTEs
+    in parallel via a per-call ThreadPoolExecutor, then stream-compares the
+    results as each S3 fetch returns (compare-as-you-fetch). Holds at most
+    ~2-3 result_data string references in memory at any time.
+
+    Compare semantics:
+      - The first candidate run to arrive becomes the "primary candidate"
+        that defines the determinism reference.
+      - baseline ↔ primary candidate  → correctness check.
+      - primary candidate ↔ each other candidate run → determinism check.
+
+    Returns None on success, or an error string on execution failure,
+    result-set mismatch, or non-determinism. n_retry defaults to 5 because
+    these EXECUTEs are one-shot (no R-redundancy below them); eval-phase
+    EXECUTEs use the submit_run_operation default of 2 (R=n_runs absorbs
+    transient flakes there).
     """
-    cand = None
-    base = None
-    first_cand_data = None
-    try:
-        base = submit_run_operation(
-            Operation.EXECUTE, baseline_plan_str, data_folder, n_retry=n_retry, **kwargs
+    n_total = 1 + n_determinism_retries  # 1 baseline + N candidate EXECUTEs
+
+    def _submit_one(kind: str, plan_str: str):
+        r = submit_run_operation(
+            Operation.EXECUTE, plan_str, data_folder, n_retry=n_retry, **kwargs,
         )
-        if not base or base.get("error"):
-            return f"Baseline execution failed: {(base or {}).get('error', 'Unknown error')}"
+        return kind, r
 
-        for i in range(n_determinism_retries):
-            cand = submit_run_operation(
-                Operation.EXECUTE, candidate_plan_str, data_folder, n_retry=n_retry, **kwargs
-            )
-            if not cand or cand.get("error"):
-                return f"Candidate execution failed: {(cand or {}).get('error', 'Unknown error')}"
+    baseline_data: Optional[str] = None       # set once baseline EXECUTE arrives
+    primary_cand_data: Optional[str] = None   # set by the FIRST candidate to arrive
+    error_to_return: Optional[str] = None
 
-            if i == 0:
-                # First run: compare against baseline for correctness
-                if not compare_result_sets(base["result_data"], cand["result_data"]):
-                    return (
-                        "Result set mismatch: candidate plan output does not match "
-                        "baseline plan output."
+    pool = ThreadPoolExecutor(max_workers=n_total)
+    futures = []
+    try:
+        futures.append(pool.submit(_submit_one, "base", baseline_plan_str))
+        for _ in range(n_determinism_retries):
+            futures.append(pool.submit(_submit_one, "cand", candidate_plan_str))
+
+        for fut in as_completed(futures):
+            try:
+                kind, r = fut.result()
+            except Exception as exc:
+                error_to_return = f"Validation failed: {exc}"
+                break
+
+            if not r or r.get("error"):
+                if kind == "base":
+                    error_to_return = (
+                        f"Baseline execution failed: {(r or {}).get('error', 'Unknown error')}"
                     )
-                first_cand_data = cand.pop("result_data")
-                base.pop("result_data", None)
-            else:
-                # Subsequent runs: compare against first run for determinism
-                if not compare_result_sets(first_cand_data, cand["result_data"]):
-                    return (
-                        "Non-deterministic plan: candidate plan produced different "
-                        "results across executions."
+                else:
+                    error_to_return = (
+                        f"Candidate execution failed: {(r or {}).get('error', 'Unknown error')}"
                     )
-                cand.pop("result_data", None)
+                break
 
-        return None
+            if kind == "base":
+                if primary_cand_data is not None:
+                    # A candidate already became primary -> correctness compare now.
+                    if not compare_result_sets(r["result_data"], primary_cand_data):
+                        error_to_return = (
+                            "Result set mismatch: candidate plan output does not match "
+                            "baseline plan output."
+                        )
+                        r.pop("result_data", None)
+                        break
+                    r.pop("result_data", None)
+                else:
+                    # Stash baseline; correctness compare deferred to first cand arrival.
+                    baseline_data = r["result_data"]
+                    r.pop("result_data", None)
+            else:  # kind == "cand"
+                if primary_cand_data is None:
+                    # First candidate to arrive becomes the determinism reference.
+                    primary_cand_data = r["result_data"]
+                    r.pop("result_data", None)
+                    if baseline_data is not None:
+                        if not compare_result_sets(baseline_data, primary_cand_data):
+                            error_to_return = (
+                                "Result set mismatch: candidate plan output does not match "
+                                "baseline plan output."
+                            )
+                            baseline_data = None
+                            break
+                        baseline_data = None  # drop baseline ref after correctness check
+                else:
+                    # Subsequent candidates: determinism check vs the primary.
+                    if not compare_result_sets(primary_cand_data, r["result_data"]):
+                        error_to_return = (
+                            "Non-deterministic plan: candidate plan produced different "
+                            "results across executions."
+                        )
+                        r.pop("result_data", None)
+                        break
+                    r.pop("result_data", None)
 
-    except Exception as exc:
-        return f"Validation failed: {exc}"
+        return error_to_return
 
     finally:
-        first_cand_data = None
-        if isinstance(cand, dict):
-            cand.pop("result_data", None)
-        if isinstance(base, dict):
-            base.pop("result_data", None)
+        # Drop any remaining payload refs, and best-effort cancel pending
+        # futures. In-flight Modal sandboxes finish in the background and
+        # self-clean via their sandbox_timeout; we don't block on them.
+        baseline_data = None
+        primary_cand_data = None
+        for fut in futures:
+            fut.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 # ModalRunner cache — avoids repeated modal.App.lookup() and image definition
@@ -213,6 +266,7 @@ def submit_run_operation(
         runner_kwargs = {}
         
     def run_attempt():
+        """Run sandbox and return UUID string on success, or error dict on failure."""
         runner = _get_runner(SANDBOX_NAME, runner_kwargs or {})
         try:
             uuid = runner.run_operation(
@@ -224,7 +278,9 @@ def submit_run_operation(
         except Exception as exc:
             return {"error": str(exc)}
 
-        return read_uuid_result(operation, uuid=uuid)
+        if uuid is None:
+            return {"error": "No UUID found in output."}
+        return uuid
 
     if n_retry < 0:
         raise ValueError("n_retry must be non-negative")
@@ -234,18 +290,25 @@ def submit_run_operation(
         if i > 0:
             time.sleep(min(2 ** i, 10))  # ~exponential backoff
 
+        # Semaphore caps concurrent Modal sandboxes; rate gate inside it
+        # spaces consecutive starts by >= 1/RATE_LIMIT_PER_SEC.
         with _SANDBOX_SEM:
-            _gate_modal_start()  # ensures consecutive Modal starts are spaced by >= 1/RATE_LIMIT_PER_SEC
-            result = run_attempt()
-        
+            _gate_modal_start()
+            uuid_or_error = run_attempt()
+
+        # S3 result fetch happens OUTSIDE the semaphore — no need to hold
+        # a sandbox slot while waiting on an HTTP call to AWS.
+        if isinstance(uuid_or_error, str):
+            result = read_uuid_result(operation, uuid=uuid_or_error)
+        else:
+            result = uuid_or_error
+
         if result and not result.get("error", None):
             break
-        
+
         if not result:
             if i == n_retry:
                 return {"error": "No result returned from operation after retries."}
-            # if verbose:
-            #     print("Retrying operation due to no result returned.")
             continue
 
         if i == n_retry: # final attempt, don't retry again
@@ -253,10 +316,8 @@ def submit_run_operation(
 
         error_kw = next((kw for kw in RETRY_DEFAULT_ERROR_KWS if kw in result.get("error", "")), None)
         if error_kw and (not error_kw in RETRY_ONLY_ONCE or i == 0):
-            # if verbose:
-            #     print(f"Retrying operation due to error: {result.get('error', '')}")
             continue
-        
+
         break
     
     if result and result.get("error", None):
@@ -368,6 +429,10 @@ def evaluate_plan_n_runs(
 
     def run_single_evaluation(run_id: int) -> tuple[int, dict | None, str | None]:
         try:
+            # Eval/timing path uses the submit_run_operation default (n_retry=2)
+            # because R=n_runs redundancy absorbs transient flakes. The
+            # validation/determinism path overrides this to n_retry=5 because
+            # those EXECUTEs are one-shot with no replay below them.
             result = submit_run_operation(
                 operation=operation,
                 input_str=plan_json,

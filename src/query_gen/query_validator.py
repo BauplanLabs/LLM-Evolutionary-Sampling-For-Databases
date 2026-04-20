@@ -81,7 +81,7 @@ def check_query_validity(
         operation=Operation.VALIDATE,
         input_str=query,
         data_folder=data_folder,
-        n_retry=1,
+        n_retry=5,
         **kwargs
     )
 
@@ -96,7 +96,7 @@ def check_query_validity(
         plan_json = plan_to_json(result["plan"])
         validation_err = validate_plan_result_set(
             plan_json, plan_json, data_folder,
-            n_retry=1,
+            n_retry=5,
             n_determinism_retries=n_determinism_retries,
             **kwargs,
         )

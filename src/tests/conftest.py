@@ -16,3 +16,7 @@ def pytest_configure(config):
         "markers",
         "integration: tests that make real Modal/S3 calls (deselect with -m 'not integration')",
     )
+    config.addinivalue_line(
+        "markers",
+        "modal: real-Modal integration tests (deselect with -m 'not modal', run with -m modal)",
+    )
