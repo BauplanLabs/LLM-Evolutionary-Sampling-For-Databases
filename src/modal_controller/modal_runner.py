@@ -30,7 +30,13 @@ class ModalRunner:
         """Initialize a ModalRunner, looking up the Modal app and building the container image."""
         self.scale_factor = scale_factor
         self.app = modal.App.lookup(app_name, create_if_missing=True)
-        self.image = self._get_base_image(rebuild_image)
+        # Modal re-walks every add_local_dir(copy=True) tree on every Sandbox.create()
+        # to recompute the image's content hash (~12s + ~33% CPU with datafusion_patched/).
+        # Build the heavy image once, then reference it by id so subsequent sandbox
+        # creations skip the walk entirely (~70x faster per create).
+        heavy_image = self._get_base_image(rebuild_image)
+        heavy_image.build(self.app)
+        self.image = modal.Image.from_id(heavy_image.object_id)
     
     def _get_base_image(self, rebuild_image: bool = False):
         """Build the Modal container image with DataFusion, dependencies, and TPC data."""
