@@ -208,3 +208,9 @@ __marimo__/
 
 # User-specific files
 outputs/
+
+# Benchmark data (generated locally via scripts in src/modal_controller/)
+data/
+
+# macOS
+.DS_Store
