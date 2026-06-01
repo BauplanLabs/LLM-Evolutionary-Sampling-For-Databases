@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ Making Databases Faster with LLM Evolutionary Sampling
+# ⚡ DBPLANBENCH: Test-Time Optimization of Physical Query Plans with LLMs
 
 [![arXiv](https://img.shields.io/badge/arXiv-2602.10387-b31b1b.svg?style=flat&logo=arxiv)](https://arxiv.org/abs/2602.10387) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
 
