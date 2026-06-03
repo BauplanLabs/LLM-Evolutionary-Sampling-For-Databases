@@ -307,9 +307,9 @@ for i, plan in enumerate(planning.plans):
 
 For detailed API documentation, return types, and troubleshooting, see [`src/README.md`](src/README.md).
 
-## Local Development
+## Local Execution & Development
 
-To build, test, and modify the patched DataFusion engine locally (instead of only in Modal sandboxes), you need:
+To build and run the patched DataFusion engine locally instead of on Modal, you need:
 
 1. **Rust toolchain** — install via [rustup](https://rustup.rs/)
 2. **Protocol Buffers compiler (`protoc`)**:
@@ -323,7 +323,9 @@ Then install with the `local` extra:
 uv sync --extra local
 ```
 
-This builds the patched DataFusion wheel from `datafusion_patched/` and installs the `datafusion` Python package into your environment. You can then `import datafusion` and use it locally for development and testing. This step is not required for normal usage — Modal sandboxes build the engine themselves.
+This builds the patched DataFusion wheel from `datafusion_patched/` and installs the `datafusion` Python package. This step is not required for normal (Modal) usage.
+
+To run the pipeline locally, pass `exec_local=True` to `optimize_queries`, `benchmark_plans`, `get_engine_plans`, `validate_queries`, or `generate_queries`. Benchmark data is generated under `data/` automatically on first use (the in-use benchmark at the requested `scale_factor`).
 
 ## Citation
 
