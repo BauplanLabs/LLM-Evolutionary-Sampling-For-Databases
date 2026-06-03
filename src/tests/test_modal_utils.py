@@ -138,3 +138,41 @@ class TestCompareResultSets:
         baseline = self._to_json([{"a": 1, "b": 2}])
         model = self._to_json([{"b": 2, "a": 1}])
         assert compare_result_sets(baseline, model) is True
+
+
+# ---------------------------------------------------------------------------
+# ModalRunner._inject_placeholders — placeholder/kwarg substitution for the
+# Modal operation script (the encoding LocalRunner mirrors via translation).
+# ---------------------------------------------------------------------------
+
+from modal_controller.modal_runner import ModalRunner
+
+
+class TestInjectPlaceholders:
+    def _inject(self, code, placeholders):
+        return ModalRunner._inject_placeholders(
+            code, placeholders, data_folder="/tmp/data/data_tpch",
+            return_uuid="uid-1", s3_bucket_name="my-bucket",
+        )
+
+    def test_full_metrics_true_becomes_truthy_literal(self):
+        code = "FULL_METRICS = 'FULL_METRICS_HERE' == 'True'"
+        out = self._inject(code, {"FULL_METRICS": True, "CPU_LIMIT": "4"})
+        assert out == "FULL_METRICS = 'True' == 'True'"  # evaluates to True
+
+    def test_unset_full_metrics_stays_literal_and_is_falsey(self):
+        code = "FULL_METRICS = 'FULL_METRICS_HERE' == 'True'"
+        out = self._inject(code, {"CPU_LIMIT": "4"})
+        # token left as-is -> 'FULL_METRICS_HERE' == 'True' -> False
+        assert out == code
+
+    def test_lowercase_placeholder_key_is_uppercased(self):
+        # query_gen sets the key lowercase; the token is uppercase.
+        code = "INCLUDE_SAMPLE_ROWS = 'INCLUDE_SAMPLE_ROWS_HERE'"
+        out = self._inject(code, {"include_sample_rows": "True", "CPU_LIMIT": "4"})
+        assert out == "INCLUDE_SAMPLE_ROWS = 'True'"
+
+    def test_special_tokens_substituted(self):
+        code = "DATA_FOLDER_HERE | UUID_HERE | S3_BUCKET_NAME_HERE | CPU_LIMIT_HERE"
+        out = self._inject(code, {"CPU_LIMIT": "8"})
+        assert out == "/tmp/data/data_tpch | uid-1 | my-bucket | 8"

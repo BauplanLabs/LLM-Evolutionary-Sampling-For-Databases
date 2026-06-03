@@ -1,6 +1,5 @@
 import uuid
 import modal
-import os
 from pathlib import Path
 from enum import Enum
 from typing import Optional
@@ -9,6 +8,10 @@ from modal_controller.constants import S3_BUCKET_NAME, AWS_SECRET_NAME, DEFAULT_
 
 _MODULE_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _MODULE_DIR.parents[1]
+
+# Files concatenated (in order) ahead of an operation script to form the full
+# sandbox program: the DataFusion engine, then the shared operation builders.
+_OP_CONCAT_PREFIX = ("db_base.py", "operations/base_operation.py")
 
 class Operation(Enum):
     """Modal sandbox operation types, each mapping to a Python script."""
@@ -66,11 +69,24 @@ class ModalRunner:
                 .run_commands(f"python /app/generate_tpch_files.py --scale-factor {self.scale_factor} --benchmark both --data-dir /tmp/data", force_build=rebuild_image)
         )
     
-    def _load_file(self, filepath: str) -> str:
-        """Read and return the text content of a local file."""
-        with open(filepath, 'r') as f:
-            return f.read()
-    
+    @staticmethod
+    def _inject_placeholders(code: str, placeholders: dict, data_folder: str,
+                             return_uuid: str, s3_bucket_name: str) -> str:
+        """Substitute the ``*_HERE`` tokens in the concatenated operation code.
+
+        Each ``placeholders`` key ``K`` replaces the token ``{K.upper()}_HERE``
+        with ``str(value)``; the data folder, UUID, and S3 bucket are
+        substituted last. Tokens with no corresponding placeholder are left as
+        literal strings (the operation scripts treat e.g. an unreplaced
+        ``'FULL_METRICS_HERE'`` as False via ``== 'True'``).
+        """
+        for key, value in placeholders.items():
+            code = code.replace(f"{key.upper()}_HERE", str(value))
+        code = code.replace("DATA_FOLDER_HERE", data_folder)
+        code = code.replace("UUID_HERE", return_uuid)
+        code = code.replace("S3_BUCKET_NAME_HERE", s3_bucket_name)
+        return code
+
     def run_operation(self, operation: Operation, input_str: str, data_folder: str = '/tmp/data/data_tpch',
             cpu: tuple = (4, 4), memory: tuple = (4 * 1024, 4 * 1024),
             env: Optional[dict] = None, sandbox_kwargs: Optional[dict] = None,
@@ -94,14 +110,9 @@ class ModalRunner:
                 "See README for setup instructions."
             )
 
-        operation_file = operation.value
-        
-        # Load base and operation files
-        base_code = self._load_file(os.path.join(os.path.dirname(__file__), "db_base.py"))
-        operation_code = self._load_file(os.path.join(os.path.dirname(__file__), operation_file))
-        
-        # Concatenate code (no more embedding large input_str)
-        full_code = base_code + "\n\n" + operation_code
+        # Concatenate engine + op builders + the operation script into one program.
+        files = (*_OP_CONCAT_PREFIX, operation.value)
+        full_code = "\n\n".join((_MODULE_DIR / f).read_text() for f in files)
 
         # Derive CPU count from allocation (use max value from the tuple)
         cpu_count = str(cpu[1]) if isinstance(cpu, tuple) else str(cpu)
@@ -113,18 +124,11 @@ class ModalRunner:
         env_dict = dict(env or {})
         env_dict.setdefault("RAYON_NUM_THREADS", cpu_count)
 
-        # Override placeholders
-        for key, value in placeholders.items():
-            placeholder = f"{key.upper()}_HERE"
-            full_code = full_code.replace(placeholder, str(value))
-
-        full_code = full_code.replace("DATA_FOLDER_HERE", data_folder)
-        
         return_uuid = str(uuid.uuid4())
-        full_code = full_code.replace("UUID_HERE", return_uuid)
-        
-        full_code = full_code.replace("S3_BUCKET_NAME_HERE", S3_BUCKET_NAME)
-        
+        full_code = self._inject_placeholders(
+            full_code, placeholders, data_folder, return_uuid, S3_BUCKET_NAME
+        )
+
         # Execute in Modal
         sb = modal.Sandbox.create(
             image=self.image,

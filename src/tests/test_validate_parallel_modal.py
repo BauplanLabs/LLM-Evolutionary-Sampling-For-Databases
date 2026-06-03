@@ -43,13 +43,15 @@ pytestmark = pytest.mark.modal
 # ---------------------------------------------------------------------------
 
 def _plan_str_for(query: str) -> str:
-    from dbplanbench import get_engine_plans
-    from dbplanbench_utils import plan_to_json
-    result = get_engine_plans(
-        [query], dataset=_DATASET, scale_factor=_SCALE_FACTOR, verbose=False,
+    """Serialize *query* to its succinct physical-plan JSON via the Modal PLAN op
+    (exactly the form that EXECUTE/validate_plan_result_set consumes)."""
+    from modal_controller.utils import submit_run_operation
+    from modal_controller.modal_runner import Operation
+    result = submit_run_operation(
+        Operation.PLAN, query, _DATA_FOLDER, runner_kwargs=_RUNNER_KWARGS,
     )
-    assert result.plans[0] is not None, f"Planning failed: {result.errors[0]}"
-    return plan_to_json(result.plans[0].base_plan)
+    assert result and result.get("plan"), f"Planning failed: {result}"
+    return result["plan"]
 
 
 @pytest.fixture(scope="module")

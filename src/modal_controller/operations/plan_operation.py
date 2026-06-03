@@ -7,6 +7,7 @@ or an ``error`` payload under ``plan-results/<UUID>.json``.
 import boto3
 import json
 
+# Context constants overriden by modal_runner.py
 CPU_LIMIT = 'CPU_LIMIT_HERE'
 
 with open('/tmp/input_data.txt', 'r') as f:
@@ -14,13 +15,7 @@ with open('/tmp/input_data.txt', 'r') as f:
 
 try:
     db_client = DataFusionDB(data_folder=DATA_FOLDER, cpu_limit=CPU_LIMIT)
-    plan = db_client.serialize_query_to_physical_plan(query)
-    
-    composed_data = {
-        "plan": plan,
-        "query": query
-    }
-    
+    composed_data = op_plan(db_client, query)
 except Exception as e:
     composed_data = {
         "error": str(e)
