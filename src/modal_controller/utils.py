@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, TYPE_CHECKING
 import boto3
 import json
 import pandas as pd
@@ -9,6 +9,9 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from modal_controller.modal_runner import ModalRunner, Operation
 from modal_controller.constants import *
+
+if TYPE_CHECKING:
+    from modal_controller.local_runner import LocalRunner
 
 
 def get_s3_result(uuid: str, operation: Operation, bucket_name: Optional[str] = None) -> dict:
@@ -88,14 +91,16 @@ def validate_plan_result_set(
     data_folder: str,
     n_retry: int = 5,
     n_determinism_retries: int = 3,
+    exec_local: bool = False,
     **kwargs,
 ) -> Optional[str]:
     """Execute *candidate_plan_str* and *baseline_plan_str* and compare result sets.
 
     Submits 1 baseline EXECUTE + ``n_determinism_retries`` candidate EXECUTEs
-    in parallel via a per-call ThreadPoolExecutor, then stream-compares the
-    results as each S3 fetch returns (compare-as-you-fetch). Holds at most
-    ~2-3 result_data string references in memory at any time.
+    via a per-call ThreadPoolExecutor (parallel on Modal; serialized locally to
+    avoid single-machine contention), then stream-compares the results as each
+    one arrives (compare-as-you-fetch). Holds at most ~2-3 result_data string
+    references in memory at any time.
 
     Compare semantics:
       - The first candidate run to arrive becomes the "primary candidate"
@@ -107,13 +112,15 @@ def validate_plan_result_set(
     result-set mismatch, or non-determinism. n_retry defaults to 5 because
     these EXECUTEs are one-shot (no R-redundancy below them); eval-phase
     EXECUTEs use the submit_run_operation default of 2 (R=n_runs absorbs
-    transient flakes there).
+    transient flakes there). When *exec_local* is True, the EXECUTEs run via
+    LocalRunner instead of Modal.
     """
     n_total = 1 + n_determinism_retries  # 1 baseline + N candidate EXECUTEs
 
-    def _submit_one(kind: str, plan_str: str):
+    def _submit_one(kind: str, plan_str: str) -> tuple:
         r = submit_run_operation(
-            Operation.EXECUTE, plan_str, data_folder, n_retry=n_retry, **kwargs,
+            Operation.EXECUTE, plan_str, data_folder, n_retry=n_retry,
+            exec_local=exec_local, **kwargs,
         )
         return kind, r
 
@@ -121,7 +128,12 @@ def validate_plan_result_set(
     primary_cand_data: Optional[str] = None   # set by the FIRST candidate to arrive
     error_to_return: Optional[str] = None
 
-    pool = ThreadPoolExecutor(max_workers=n_total)
+    # Serialize locally (single machine) to bound resource use; Modal isolates
+    # each EXECUTE in its own sandbox so it runs them concurrently. The
+    # determinism check still runs all N candidate executions either way —
+    # multi-partition execution can be non-deterministic regardless of backend.
+    pool_workers = 1 if exec_local else n_total
+    pool = ThreadPoolExecutor(max_workers=pool_workers)
     futures = []
     try:
         futures.append(pool.submit(_submit_one, "base", baseline_plan_str))
@@ -217,12 +229,35 @@ def _get_runner(app_name: str, runner_kwargs: dict) -> ModalRunner:
             _runner_cache[key] = ModalRunner(app_name, **runner_kwargs)
         return _runner_cache[key]
 
+
+# LocalRunner singleton — the local analog of a cached ModalRunner. LocalRunner
+# holds no per-call state (cpu is derived per run_operation, each call builds a
+# fresh DataFusionDB), so one shared instance is enough and is safe to call from
+# many threads. Imported here so the Modal path never requires the ``local`` extra.
+_local_runner = None
+_local_runner_lock = threading.Lock()
+
+def _get_local_runner() -> "LocalRunner":
+    """Return the shared LocalRunner, creating it on first use."""
+    global _local_runner
+    with _local_runner_lock:
+        if _local_runner is None:
+            try:
+                from modal_controller.local_runner import LocalRunner
+            except ImportError as exc:
+                raise ImportError(
+                    "Local execution requires the patched DataFusion engine. "
+                    "Install it with `uv sync --extra local` (see README)."
+                ) from exc
+            _local_runner = LocalRunner()
+        return _local_runner
+
 # Protects the scheduling state
 _REMOTE_SCHED_LOCK = threading.Lock()
 _SANDBOX_SEM = threading.Semaphore(MAX_CONCURRENT_SANDBOXES)
 _latest_scheduled_start = 0.0  # monotonic time
 
-def _gate_modal_start():
+def _gate_modal_start() -> None:
     """Rate-limit Modal sandbox starts to at most RATE_LIMIT_PER_SEC per second."""
     global _latest_scheduled_start
 
@@ -243,29 +278,52 @@ def submit_run_operation(
     n_retry: int = 2,
     runner_kwargs: dict | None = None,
     verbose: bool = True,
+    exec_local: bool = False,
     **kwargs
-):
-    """Run an operation on Modal with rate limiting, retries, and error mapping.
+) -> dict:
+    """Run an operation on Modal (or locally) with retries and error mapping.
 
-    Creates a ModalRunner sandbox, executes the operation, retrieves the
-    result from S3, and retries on transient errors (up to *n_retry* times).
+    When *exec_local* is True, runs the operation in-process via
+    :class:`LocalRunner` (no Modal sandbox or S3). Otherwise creates a
+    ModalRunner sandbox, executes the operation, retrieves the result from
+    S3, and retries on transient errors (up to *n_retry* times).
 
     Args:
         operation: Operation type (PLAN, VALIDATE, EXECUTE, EVALUATE, FETCH_SCHEMA).
         input_str: Input string (SQL query or plan JSON).
-        data_folder: Modal-side data directory.
-        n_retry: Max retry attempts on transient errors.
-        runner_kwargs: Extra kwargs for ModalRunner constructor.
+        data_folder: Data directory (Modal-side path or local path).
+        n_retry: Max retry attempts on transient errors (Modal path only;
+            local execution is deterministic and runs once).
+        runner_kwargs: Extra kwargs for the ModalRunner constructor. Ignored
+            when *exec_local* is True (the local data folder is the authority).
         verbose: Print retry messages.
-        **kwargs: Forwarded to ``ModalRunner.run_operation``.
+        exec_local: If True, run in-process via LocalRunner.
+        **kwargs: Forwarded to the runner's ``run_operation`` (Modal). For the
+            local path, ``cpu`` sets DataFusion parallelism and
+            ``full_metrics``/``include_sample_rows`` (directly or via
+            ``sandbox_placeholders``) are translated to LocalRunner params.
 
     Returns:
-        Result dict from S3, or ``{"error": ...}`` on failure.
+        Result dict, or ``{"error": ...}`` on failure.
     """
+    if exec_local:
+        # Local execution is deterministic (no remote sandbox), so there are no
+        # transient failures to retry — run once via the shared LocalRunner.
+        # kwargs are forwarded as-is, exactly like the Modal path's
+        # runner.run_operation(**kwargs); LocalRunner reads what it understands
+        # (cpu, sandbox_placeholders, full_metrics, include_sample_rows) and
+        # ignores the Modal-only rest.
+        return _get_local_runner().run_operation(
+            operation=operation,
+            input_str=input_str,
+            data_folder=data_folder,
+            **kwargs,
+        )
+
     if runner_kwargs is None:
         runner_kwargs = {}
-        
-    def run_attempt():
+
+    def run_attempt() -> dict | str:
         """Run sandbox and return UUID string on success, or error dict on failure."""
         runner = _get_runner(SANDBOX_NAME, runner_kwargs or {})
         try:
@@ -384,6 +442,7 @@ def evaluate_plan_n_runs(
     n_runs: int = 1,
     max_eval_workers: int = 8,
     runner_kwargs: dict | None = None,
+    exec_local: bool = False,
     **kwargs
 ) -> dict:
     """Execute a plan *n_runs* times concurrently and aggregate metrics.
@@ -394,10 +453,11 @@ def evaluate_plan_n_runs(
     Args:
         operation: Operation type (typically EVALUATE).
         plan_json: Plan JSON string to execute.
-        data_folder: Modal-side data directory.
+        data_folder: Data directory (Modal-side or local).
         n_runs: Number of evaluation runs (must be >= 1).
         max_eval_workers: Max concurrent evaluation workers.
         runner_kwargs: Extra kwargs for ModalRunner.
+        exec_local: If True, run in-process via LocalRunner.
         **kwargs: Forwarded to ``submit_run_operation``.
 
     Returns:
@@ -438,6 +498,7 @@ def evaluate_plan_n_runs(
                 input_str=plan_json,
                 data_folder=data_folder,
                 runner_kwargs=runner_kwargs,
+                exec_local=exec_local,
                 **kwargs,
             )
 
@@ -454,7 +515,12 @@ def evaluate_plan_n_runs(
 
     total_successful_runs: int = 0
 
-    with ThreadPoolExecutor(max_workers=max_eval_workers) as executor:
+    # Local execution shares one machine, so concurrent runs contend for CPU and
+    # corrupt the timing they are meant to measure. Run them serially when local;
+    # Modal isolates each run in its own sandbox, so it keeps full concurrency.
+    eval_workers = 1 if exec_local else max_eval_workers
+
+    with ThreadPoolExecutor(max_workers=eval_workers) as executor:
         future_to_id = {executor.submit(run_single_evaluation, i + 1): i + 1 for i in range(n_runs)}
 
         for future in as_completed(future_to_id):

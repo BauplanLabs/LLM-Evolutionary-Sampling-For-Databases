@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 import json
+import os
 import random
 
 def repo_root() -> Path:
@@ -60,9 +62,98 @@ def log_line(verbose: bool, message: str) -> None:
         print(message)
 
 
-def data_folder_for_dataset(dataset: str) -> str:
-    """Return the Modal-side data folder path for a given dataset name."""
+def data_folder_for_dataset(dataset: str, exec_local: bool = False,
+                            scale_factor: Optional[int] = None) -> str:
+    """Return the data folder path for a given dataset name.
+
+    Modal returns a fixed path (``/tmp/data/data_<dataset>``); the scale factor
+    lives in the scale-specific image, so encoding it in the path would change
+    the image and trigger rebuilds — it is deliberately omitted here.
+
+    Locally there is no image, so every scale factor coexists under
+    ``LOCAL_DATA_DIR`` and a *scaled* dataset gets a ``_sf<N>`` suffix (pass its
+    *scale_factor*). A *scaleless* dataset — e.g. a fixed dataset like IMDB/JOB —
+    passes ``scale_factor=None`` and gets no suffix.
+    """
+    if exec_local:
+        from modal_controller.constants import LOCAL_DATA_DIR
+        suffix = f"_sf{scale_factor}" if scale_factor is not None else ""
+        return os.path.join(LOCAL_DATA_DIR, f"data_{dataset}{suffix}")
     return f"/tmp/data/data_{dataset}"
+
+
+@contextmanager
+def _file_lock(lock_path: str) -> Iterator[None]:
+    """Best-effort cross-process exclusive lock via ``fcntl`` (POSIX).
+
+    On platforms without ``fcntl`` (e.g. Windows, where local execution is
+    unsupported anyway) this degrades to a no-op; the atomic temp-rename in
+    :func:`ensure_local_data` still prevents half-populated data folders.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        yield
+        return
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
+def ensure_local_data(dataset: str, scale_factor: int) -> str:
+    """Ensure local data for *dataset* at *scale_factor* exists.
+
+    Used by the ``exec_local`` paths: local execution mirrors Modal, which
+    generates its data at image-build time. When the local data folder for this
+    (dataset, scale_factor) doesn't exist yet, this generates it into
+    ``LOCAL_DATA_DIR`` — every scale factor coexists in its own ``_sf<N>`` folder,
+    so switching scale never regenerates. The generation is always announced
+    because it can take a few minutes. Returns the data folder.
+
+    Generation is guarded by a cross-process lock (so concurrent runs generate
+    once, not N times) and written to a temp directory that is atomically
+    renamed into place. Because of that atomic rename, the folder existing means
+    generation completed — so a plain ``isdir`` check is the success signal.
+    """
+    folder = data_folder_for_dataset(dataset, exec_local=True, scale_factor=scale_factor)
+    if os.path.isdir(folder):
+        return folder
+
+    if dataset not in ("tpch", "tpcds"):
+        raise ValueError(
+            f"Local data generation is supported for 'tpch' and 'tpcds', not '{dataset}'."
+        )
+
+    from modal_controller.constants import LOCAL_DATA_DIR
+    from modal_controller.generate_tpch_files import generate_benchmark_data
+    import shutil
+    import tempfile
+
+    os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
+    with _file_lock(os.path.join(LOCAL_DATA_DIR, f".{os.path.basename(folder)}.gen.lock")):
+        # Re-check under the lock: another process may have generated it while
+        # we waited.
+        if os.path.isdir(folder):
+            return folder
+
+        print(
+            f"[exec_local] No local data for '{dataset}' (sf={scale_factor}) found at {folder}. "
+            f"Generating {dataset} at scale_factor={scale_factor} (this may take a few minutes)..."
+        )
+        tmp_base = tempfile.mkdtemp(prefix=f".{dataset}_gen_", dir=LOCAL_DATA_DIR)
+        try:
+            generate_benchmark_data(dataset, factor=scale_factor, base_data_dir=tmp_base)
+            tmp_folder = os.path.join(tmp_base, f"data_{dataset}")
+            if not (os.path.isdir(tmp_folder) and os.listdir(tmp_folder)):
+                raise RuntimeError(f"Data generation produced no files for '{dataset}'.")
+            os.replace(tmp_folder, folder)  # atomic; folder is absent (checked under lock)
+        finally:
+            shutil.rmtree(tmp_base, ignore_errors=True)
+
+    return folder
 
 
 def plan_to_json(plan: Any) -> str:

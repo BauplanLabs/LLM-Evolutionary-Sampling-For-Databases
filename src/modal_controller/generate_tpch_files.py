@@ -7,13 +7,14 @@ Standalone script to generate TPC-H or TPC-DS Parquet files using DuckDB.
 import duckdb
 import os
 import argparse
-from os.path import dirname, abspath, join
+from os.path import join
 
 
-def generate_benchmark_data(benchmark_type='tpch', factor=1, base_data_dir=None, seed=0.42):
-    if base_data_dir is None:
-        base_data_dir = dirname(abspath(__file__))
-    
+def generate_benchmark_data(benchmark_type, factor, base_data_dir, seed=0.42):
+    # base_data_dir is required: both callers (the Modal image build and the
+    # local exec_local path) pass an explicit directory, so there is no default
+    # to compute here.
+
     # Benchmark configurations
     config = {
         'tpch': {
@@ -67,8 +68,8 @@ def main():
                        help='Which benchmark to generate (default: tpch)')
     parser.add_argument('--scale-factor', '-s', type=int, default=1,
                        help='Scale factor for data generation (default: 1)')
-    parser.add_argument('--data-dir', '-d', type=str, default=None,
-                       help='Base directory for data_tpch and data_tpcds folders (default: project root)')
+    parser.add_argument('--data-dir', '-d', type=str, required=True,
+                       help='Base directory under which data_tpch / data_tpcds folders are written')
     parser.add_argument('--seed', type=float, default=0.42,
                        help='Random seed for reproducible data generation')
     

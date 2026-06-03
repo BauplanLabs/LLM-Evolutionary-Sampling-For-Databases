@@ -20,3 +20,8 @@ def pytest_configure(config):
         "markers",
         "modal: real-Modal integration tests (deselect with -m 'not modal', run with -m modal)",
     )
+    config.addinivalue_line(
+        "markers",
+        "heavy: slow tests that generate benchmark data locally (deselect with "
+        "-m 'not heavy', run with -m heavy)",
+    )

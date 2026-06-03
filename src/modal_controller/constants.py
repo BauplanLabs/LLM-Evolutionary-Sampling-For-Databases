@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 # Modal sandbox name
 SANDBOX_NAME = "modal-faster-dbs-with-llms"
@@ -9,6 +10,10 @@ AWS_SECRET_NAME = 's3-aws-credentials'
 
 # Default scale factor for data generation / Modal image build.
 DEFAULT_SCALE_FACTOR = 3
+
+# Local data directory for exec_local mode — where generate_tpch_files.py
+# writes parquet tables (<repo_root>/data).
+LOCAL_DATA_DIR = str(Path(__file__).resolve().parents[2] / "data")
 
 # Recommended error keyword portions for retrying operations
 RETRY_DEFAULT_ERROR_KWS = [
