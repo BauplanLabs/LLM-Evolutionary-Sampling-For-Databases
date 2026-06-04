@@ -26,6 +26,10 @@ from modal_controller.operations.base_operation import (
 )
 from dbplanbench_utils import data_folder_for_dataset
 
+# These tests exercise the shared op builders through the in-process DataFusion
+# engine, so the whole module is local-only.
+pytestmark = pytest.mark.local
+
 TPCH_DATA = data_folder_for_dataset("tpch", exec_local=True, scale_factor=1)
 SIMPLE_QUERY = "SELECT l_orderkey, SUM(l_quantity) FROM lineitem GROUP BY l_orderkey LIMIT 10"
 JOIN_QUERY = (

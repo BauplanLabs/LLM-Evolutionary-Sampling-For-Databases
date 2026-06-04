@@ -16,6 +16,10 @@ from modal_controller.local_runner import LocalRunner
 from modal_controller.modal_runner import Operation
 from dbplanbench_utils import data_folder_for_dataset
 
+# Every test here runs the in-process DataFusion engine. The `heavy` tests below
+# additionally generate data and are tagged `@pytest.mark.heavy` on top of this.
+pytestmark = pytest.mark.local
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
