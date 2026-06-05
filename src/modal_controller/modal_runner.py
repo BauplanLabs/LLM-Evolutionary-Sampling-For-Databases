@@ -25,8 +25,9 @@ class ModalRunner:
     """Manages a Modal sandbox for running DataFusion operations.
 
     Builds a container image with the patched DataFusion engine and
-    TPC-H/TPC-DS data, then executes operations by concatenating
-    ``db_base.py`` with an operation script and running them in a sandbox.
+    TPC-H, TPC-DS, and JOB benchmark data, then executes operations by
+    concatenating ``db_base.py`` with an operation script and running them
+    in a sandbox.
     """
 
     def __init__(self, app_name: str, scale_factor: int = DEFAULT_SCALE_FACTOR, rebuild_image: bool = False):
@@ -42,9 +43,9 @@ class ModalRunner:
         self.image = modal.Image.from_id(heavy_image.object_id)
     
     def _get_base_image(self, rebuild_image: bool = False):
-        """Build the Modal container image with DataFusion, dependencies, and TPC data."""
+        """Build the Modal container image with DataFusion, dependencies, and benchmark data."""
         datafusion_local = (_REPO_ROOT / "datafusion_patched").resolve()
-        gen_tpch_file_local = _MODULE_DIR / "generate_tpch_files.py"
+        gen_data_file_local = _MODULE_DIR / "generate_benchmark_data.py"
         return (modal.Image.debian_slim(force_build=rebuild_image)
                 .apt_install("build-essential", force_build=rebuild_image)
                 .apt_install("protobuf-compiler", force_build=rebuild_image)
@@ -62,11 +63,15 @@ class ModalRunner:
                 )
                 .pip_install('boto3', 'pyarrow', 'duckdb', 'pandas', force_build=rebuild_image)
                 .add_local_file(
-                    local_path=str(gen_tpch_file_local),
-                    remote_path="/app/generate_tpch_files.py", 
+                    local_path=str(gen_data_file_local),
+                    remote_path="/app/generate_benchmark_data.py",
                     copy=True
                 )
-                .run_commands(f"python /app/generate_tpch_files.py --scale-factor {self.scale_factor} --benchmark both --data-dir /tmp/data", force_build=rebuild_image)
+                # JOB is scaleless; generate it before the scale-specific TPC layers
+                # so its (large) layer caches across scale_factor changes.
+                .run_commands("python /app/generate_benchmark_data.py --benchmark job --data-dir /tmp/data", force_build=rebuild_image)
+                .run_commands(f"python /app/generate_benchmark_data.py --benchmark tpch --scale-factor {self.scale_factor} --data-dir /tmp/data", force_build=rebuild_image)
+                .run_commands(f"python /app/generate_benchmark_data.py --benchmark tpcds --scale-factor {self.scale_factor} --data-dir /tmp/data", force_build=rebuild_image)
         )
     
     @staticmethod

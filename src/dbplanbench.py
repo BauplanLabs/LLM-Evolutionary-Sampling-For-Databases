@@ -89,8 +89,8 @@ def generate_queries(
         counts), queries (list of SQL strings), and per-query metadata.
     """
     from query_gen.orchestrator import run_query_generation
-    if dataset.lower() not in {"tpch", "tpcds"}:
-        raise ValueError("dataset must be one of: tpch, tpcds")
+    if dataset.lower() not in {"tpch", "tpcds", "job"}:
+        raise ValueError("dataset must be one of: tpch, tpcds, job")
     if n_queries <= 0:
         raise ValueError("n_queries must be > 0")
     if max_concurrent_generations < 1:

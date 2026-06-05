@@ -307,6 +307,14 @@ for i, plan in enumerate(planning.plans):
 
 For detailed API documentation, return types, and troubleshooting, see [`src/README.md`](src/README.md).
 
+
+## Datasets
+
+This repo supports the following datasets:
+
+- **`tpch`** / **`tpcds`** — produced by DuckDB at a given `scale_factor`.
+- **`job`** — the Join Order Benchmark, a set of queries over a real snapshot of the IMDB database.
+
 ## Local Execution & Development
 
 To build and run the patched DataFusion engine locally instead of on Modal, you need:
@@ -325,7 +333,7 @@ uv sync --extra local
 
 This builds the patched DataFusion wheel from `datafusion_patched/` and installs the `datafusion` Python package. This step is not required for normal (Modal) usage.
 
-To run the pipeline locally, pass `exec_local=True` to `optimize_queries`, `benchmark_plans`, `get_engine_plans`, `validate_queries`, or `generate_queries`. Benchmark data is generated under `data/` automatically on first use (the in-use benchmark at the requested `scale_factor`).
+To run the pipeline locally, pass `exec_local=True` to `optimize_queries`, `benchmark_plans`, `get_engine_plans`, `validate_queries`, or `generate_queries`. Benchmark data is prepared under `data/` automatically on first use — generated with DuckDB for `tpch`/`tpcds` (at the requested `scale_factor`), or downloaded for `job`.
 
 ## Citation
 

@@ -71,13 +71,14 @@ def data_folder_for_dataset(dataset: str, exec_local: bool = False,
     the image and trigger rebuilds — it is deliberately omitted here.
 
     Locally there is no image, so every scale factor coexists under
-    ``LOCAL_DATA_DIR`` and a *scaled* dataset gets a ``_sf<N>`` suffix (pass its
-    *scale_factor*). A *scaleless* dataset — e.g. a fixed dataset like IMDB/JOB —
-    passes ``scale_factor=None`` and gets no suffix.
+    ``LOCAL_DATA_DIR`` and a *scaled* dataset gets a ``_sf<N>`` suffix. ``job`` has
+    no scale factor, so it is always ``data_job`` regardless of *scale_factor*;
+    any other dataset is scaleless only when *scale_factor* is None.
     """
     if exec_local:
         from modal_controller.constants import LOCAL_DATA_DIR
-        suffix = f"_sf{scale_factor}" if scale_factor is not None else ""
+        scaleless = dataset.lower() == "job"
+        suffix = "" if (scaleless or scale_factor is None) else f"_sf{scale_factor}"
         return os.path.join(LOCAL_DATA_DIR, f"data_{dataset}{suffix}")
     return f"/tmp/data/data_{dataset}"
 
@@ -122,13 +123,13 @@ def ensure_local_data(dataset: str, scale_factor: int) -> str:
     if os.path.isdir(folder):
         return folder
 
-    if dataset not in ("tpch", "tpcds"):
+    if dataset not in ("tpch", "tpcds", "job"):
         raise ValueError(
-            f"Local data generation is supported for 'tpch' and 'tpcds', not '{dataset}'."
+            f"Local data generation is supported for 'tpch', 'tpcds', 'job', not '{dataset}'."
         )
 
     from modal_controller.constants import LOCAL_DATA_DIR
-    from modal_controller.generate_tpch_files import generate_benchmark_data
+    from modal_controller.generate_benchmark_data import generate_benchmark_data
     import shutil
     import tempfile
 
