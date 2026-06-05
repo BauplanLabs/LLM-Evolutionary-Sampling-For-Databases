@@ -16,18 +16,15 @@ def pytest_configure(config):
     # external dependencies and run by default. The markers below classify the
     # tests that need something extra, so they can be selected or deselected:
     #
-    #   default fast suite :  pytest -m "not modal and not heavy and not llm"
+    #   default fast suite :  pytest -m "not modal and not llm"
     #   real Modal ($)     :  pytest -m modal
     #   local-engine tests :  pytest -m local
-    #   heavy data-gen     :  pytest -m heavy
     #   real LLM calls ($) :  pytest -m llm
     for marker in (
         "modal: needs real Modal sandboxes and AWS/S3 credentials (costs money); "
         "deselect with -m 'not modal', run with -m modal",
         "local: needs the optional DataFusion engine (uv sync --extra local); runs "
         "in-process with no cloud, and auto-skips if datafusion is not installed",
-        "heavy: slow — generates benchmark data locally via DuckDB; implies local; "
-        "deselect with -m 'not heavy', run with -m heavy",
         "llm: makes real LLM API calls (costs credits); excluded from the default "
         "suite and auto-skips without an API key; run with -m llm",
     ):

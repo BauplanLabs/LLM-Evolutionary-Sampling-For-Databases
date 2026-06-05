@@ -178,6 +178,15 @@ class TestDataFolderForDataset:
         assert sf1.endswith("data_tpch_sf1")
         assert sf3.endswith("data_tpch_sf3")
 
+    def test_job_is_scaleless_local(self):
+        assert data_folder_for_dataset("job", exec_local=True).endswith(
+            os.path.join("data", "data_job"))
+        assert data_folder_for_dataset("job", exec_local=True, scale_factor=3).endswith(
+            os.path.join("data", "data_job"))
+
+    def test_job_modal_path(self):
+        assert data_folder_for_dataset("job") == "/tmp/data/data_job"
+
 
 # ---------------------------------------------------------------------------
 # ensure_local_data
@@ -196,7 +205,7 @@ class TestEnsureLocalData:
         (tmp_path / "data_tpch_sf3").mkdir()
         (tmp_path / "data_tpch_sf3" / "lineitem.parquet").touch()
         with patch("modal_controller.constants.LOCAL_DATA_DIR", str(tmp_path)), \
-             patch("modal_controller.generate_tpch_files.generate_benchmark_data") as gen:
+             patch("modal_controller.generate_benchmark_data.generate_benchmark_data") as gen:
             folder = ensure_local_data("tpch", 3)
         gen.assert_not_called()
         assert folder == str(tmp_path / "data_tpch_sf3")
@@ -205,7 +214,7 @@ class TestEnsureLocalData:
         """No data folder -> generate exactly that dataset at the given scale,
         then atomically place it at the scale-keyed folder under LOCAL_DATA_DIR."""
         with patch("modal_controller.constants.LOCAL_DATA_DIR", str(tmp_path)), \
-             patch("modal_controller.generate_tpch_files.generate_benchmark_data",
+             patch("modal_controller.generate_benchmark_data.generate_benchmark_data",
                    side_effect=_fake_generate) as gen:
             folder = ensure_local_data("tpcds", 7)
         gen.assert_called_once()
@@ -220,7 +229,7 @@ class TestEnsureLocalData:
         """Generating sf=1 then sf=2 yields two distinct folders; the second
         generation is not short-circuited by the first."""
         with patch("modal_controller.constants.LOCAL_DATA_DIR", str(tmp_path)), \
-             patch("modal_controller.generate_tpch_files.generate_benchmark_data",
+             patch("modal_controller.generate_benchmark_data.generate_benchmark_data",
                    side_effect=_fake_generate) as gen:
             folder_sf1 = ensure_local_data("tpch", 1)
             folder_sf2 = ensure_local_data("tpch", 2)
@@ -230,12 +239,23 @@ class TestEnsureLocalData:
         assert gen.call_count == 2
         assert {c.kwargs.get("factor") for c in gen.call_args_list} == {1, 2}
 
+    def test_generates_job_scaleless(self, tmp_path):
+        """job generates into a scaleless data_job folder (placeholder sf ignored)."""
+        with patch("modal_controller.constants.LOCAL_DATA_DIR", str(tmp_path)), \
+             patch("modal_controller.generate_benchmark_data.generate_benchmark_data",
+                   side_effect=_fake_generate) as gen:
+            folder = ensure_local_data("job", 3)
+        gen.assert_called_once()
+        assert gen.call_args.args[0] == "job"
+        assert folder == str(tmp_path / "data_job")
+        assert os.path.exists(os.path.join(folder, "lineitem.parquet"))
+
     def test_rejects_unsupported_dataset(self, tmp_path):
         """Unsupported dataset -> clear ValueError before any generation."""
         with patch("modal_controller.constants.LOCAL_DATA_DIR", str(tmp_path)), \
-             patch("modal_controller.generate_tpch_files.generate_benchmark_data") as gen:
+             patch("modal_controller.generate_benchmark_data.generate_benchmark_data") as gen:
             with pytest.raises(ValueError, match="tpch"):
-                ensure_local_data("imdb", 3)
+                ensure_local_data("mysql", 3)
         gen.assert_not_called()
 
 

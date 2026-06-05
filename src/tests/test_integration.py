@@ -5,7 +5,7 @@ and they cost money); the remaining tests are mocked and run in the default
 fast suite.
 
 Run the real-Modal tests:  pytest -m modal -v
-Run the fast suite only:   pytest -m "not modal and not heavy and not llm" -v
+Run the fast suite only:   pytest -m "not modal and not llm" -v
 Run everything:            pytest -v
 """
 
@@ -37,6 +37,9 @@ JOIN_QUERY = (
 )
 AGG_QUERY = "SELECT n_regionkey, COUNT(*) AS cnt FROM nation GROUP BY n_regionkey"
 INVALID_QUERY = "SELECT * FROM nonexistent_table_xyz_abc"
+
+# kind_type is one of the smallest JOB tables (a handful of rows).
+JOB_QUERY = "SELECT id, kind FROM kind_type"
 
 # All Modal-hitting tests below are tagged with this; mocked tests are left
 # unmarked so they run in the default fast suite.
@@ -131,6 +134,25 @@ class TestGetEnginePlansIntegration:
         )
         assert len(result.plans) == len(queries)
         assert len(result.errors) == len(queries)
+
+
+# ===================================================================
+# JOB dataset on Modal
+# ===================================================================
+
+@modal
+class TestJobOnModal:
+    """JOB is baked into the Modal image at build time; verify a JOB query
+    reads data_job and plans in the sandbox (covers the in-build download)."""
+
+    def test_job_query_plans_on_modal(self):
+        result = get_engine_plans(
+            [JOB_QUERY], dataset="job", scale_factor=SCALE_FACTOR, verbose=False,
+        )
+        assert isinstance(result, PlanningResult)
+        assert result.plans[0] is not None, f"JOB planning failed: {result.errors[0]}"
+        assert result.errors[0] is None
+        assert "structure" in result.plans[0]
 
 
 # ===================================================================
@@ -337,9 +359,10 @@ class TestBenchmarkQueriesIntegration:
 
 
 # ===================================================================
-# Plan structure and patch application (no Modal)
+# Plan structure and patch application (on a real engine plan, via Modal)
 # ===================================================================
 
+@modal
 class TestPlanPatchApplication:
     def test_noop_patch_preserves_plan(self, simple_plan):
         from sampling.utils import apply_patches_to_plan

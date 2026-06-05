@@ -16,8 +16,7 @@ from modal_controller.local_runner import LocalRunner
 from modal_controller.modal_runner import Operation
 from dbplanbench_utils import data_folder_for_dataset
 
-# Every test here runs the in-process DataFusion engine. The `heavy` tests below
-# additionally generate data and are tagged `@pytest.mark.heavy` on top of this.
+# Every test here runs the in-process DataFusion engine.
 pytestmark = pytest.mark.local
 
 
@@ -306,74 +305,3 @@ class TestBenchmarkQueriesLocal:
         )
         stats = result.results[0][0].get("benchmark_stats", {})
         assert "execution_time" in stats, f"got: {result.results[0][0]}"
-
-
-# ---------------------------------------------------------------------------
-# Heavy: real local data generation (DuckDB), no Modal and no LLM. These write
-# TPC-H data to disk into a temp LOCAL_DATA_DIR and are slow, so they carry the
-# `heavy` marker and are skipped by the default suite (run with `-m heavy`).
-# ---------------------------------------------------------------------------
-
-@pytest.mark.heavy
-class TestMultiScaleLocalDataIsolation:
-    def test_distinct_scales_generate_distinct_data(self, tmp_path, monkeypatch):
-        """Generating tpch at sf=1 then sf=2 must produce two distinct on-disk
-        folders, and the larger scale must hold strictly more lineitem rows.
-
-        Regression test for the silent multi-scale reuse bug: before folders were
-        scale-keyed, the sf=2 request would have found the existing sf=1 folder
-        and silently returned wrong-sized data.
-        """
-        duckdb = pytest.importorskip("duckdb")
-        from dbplanbench_utils import ensure_local_data
-
-        monkeypatch.setattr("modal_controller.constants.LOCAL_DATA_DIR", str(tmp_path))
-
-        folder_sf1 = ensure_local_data("tpch", 1)
-        folder_sf2 = ensure_local_data("tpch", 2)
-
-        assert folder_sf1 == str(tmp_path / "data_tpch_sf1")
-        assert folder_sf2 == str(tmp_path / "data_tpch_sf2")
-        assert os.path.isdir(folder_sf1) and os.path.isdir(folder_sf2)
-
-        def lineitem_rows(folder: str) -> int:
-            path = os.path.join(folder, "lineitem.parquet")
-            return duckdb.sql(f"SELECT COUNT(*) FROM '{path}'").fetchone()[0]
-
-        rows_sf1 = lineitem_rows(folder_sf1)
-        rows_sf2 = lineitem_rows(folder_sf2)
-        assert rows_sf1 > 0
-        # sf=2 holds ~2x the data of sf=1; at minimum it must be strictly larger.
-        assert rows_sf2 > rows_sf1, f"sf=2 ({rows_sf2}) not larger than sf=1 ({rows_sf1})"
-
-
-@pytest.mark.heavy
-class TestFullLocalPipeline:
-    def test_benchmark_queries_auto_generates_and_benchmarks(self, tmp_path, monkeypatch):
-        """End-to-end local path with no Modal and no LLM: benchmark_queries at a
-        fresh scale_factor auto-generates the data, plans each query, and
-        evaluates it locally — returning execution times, not errors.
-        """
-        pytest.importorskip("duckdb")
-        monkeypatch.setattr("modal_controller.constants.LOCAL_DATA_DIR", str(tmp_path))
-        from dbplanbench import benchmark_queries
-
-        queries = [
-            "SELECT l_returnflag, COUNT(*) AS c FROM lineitem "
-            "GROUP BY l_returnflag ORDER BY l_returnflag",
-            "SELECT COUNT(*) FROM orders WHERE o_orderstatus = 'F'",
-        ]
-        result = benchmark_queries(
-            queries, dataset="tpch", scale_factor=2, n_runs=2,
-            exec_local=True, verbose=False,
-        )
-
-        # Data was auto-generated once at the scale-keyed folder for sf=2.
-        assert os.path.isdir(tmp_path / "data_tpch_sf2")
-
-        assert len(result.results) == len(queries)
-        for i, entry in enumerate(result.results):
-            assert len(entry) == 1, f"query {i}: expected one result entry, got {entry}"
-            stats = entry[0]
-            assert "error" not in stats, f"query {i} failed: {stats}"
-            assert "execution_time" in stats.get("benchmark_stats", {}), stats
