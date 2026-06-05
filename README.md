@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ Making Databases Faster with LLM Evolutionary Sampling
+# ⚡ DBPLANBENCH<br>Test-Time Optimization of Physical Query Plans with LLMs
 
 [![arXiv](https://img.shields.io/badge/arXiv-2602.10387-b31b1b.svg?style=flat&logo=arxiv)](https://arxiv.org/abs/2602.10387) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
 
@@ -340,14 +340,14 @@ To run the pipeline locally, pass `exec_local=True` to `optimize_queries`, `benc
 If you find this work useful, please consider citing:
 
 ```bibtex
-@misc{erol2026makingdatabasesfaster,
-  title={Making Databases Faster with LLM Evolutionary Sampling},
-  author={Erol, Mehmet Hamza and Hao, Xiangpeng and Bianchi, Federico and Greco, Ciro and Tagliabue, Jacopo and Zou, James},
-  year={2026},
-  eprint={2602.10387},
-  archivePrefix={arXiv},
-  primaryClass={cs.DB},
-  url={https://arxiv.org/abs/2602.10387},
+@misc{erol2026testtimeoptimizationphysicalquery,
+    title={Test-Time Optimization of Physical Query Plans with LLMs}, 
+    author={Mehmet Hamza Erol and Xiangpeng Hao and Federico Bianchi and Ciro Greco and Jacopo Tagliabue and James Zou},
+    year={2026},
+    eprint={2602.10387},
+    archivePrefix={arXiv},
+    primaryClass={cs.DB},
+    url={https://arxiv.org/abs/2602.10387}, 
 }
 ```
 
