@@ -5,7 +5,7 @@ and they cost money); the remaining tests are mocked and run in the default
 fast suite.
 
 Run the real-Modal tests:  pytest -m modal -v
-Run the fast suite only:   pytest -m "not modal and not heavy" -v
+Run the fast suite only:   pytest -m "not modal and not heavy and not llm" -v
 Run everything:            pytest -v
 """
 

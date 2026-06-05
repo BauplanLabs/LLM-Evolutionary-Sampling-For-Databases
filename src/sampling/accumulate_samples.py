@@ -62,6 +62,11 @@ def accumulate_samples(
                 "is_valid": sampled_plan["is_valid"],
                 "error_message": sampled_plan["error_message"],
                 "evaluation_stats": sampled_plan.get("evaluation_stats"),
+                "model_response": sampled_plan.get("model_response"),
+                "reasoning_content": sampled_plan.get("reasoning_content"),
+                "prompt_tokens": sampled_plan.get("prompt_tokens"),
+                "completion_tokens": sampled_plan.get("completion_tokens"),
+                "total_tokens": sampled_plan.get("total_tokens"),
             }
             id2samples[query_id].append(finalized_plan)
             leaf_parents.add((query_id, sampled_plan["parent_sample_id"]))
