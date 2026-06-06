@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ DBPLANBENCH: Test-Time Optimization of Physical Query Plans with LLMs
+# ⚡ DBPLANBENCH<br>Test-Time Optimization of Physical Query Plans with LLMs
 
 [![arXiv](https://img.shields.io/badge/arXiv-2602.10387-b31b1b.svg?style=flat&logo=arxiv)](https://arxiv.org/abs/2602.10387) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
 
@@ -307,9 +307,17 @@ for i, plan in enumerate(planning.plans):
 
 For detailed API documentation, return types, and troubleshooting, see [`src/README.md`](src/README.md).
 
-## Local Development
 
-To build, test, and modify the patched DataFusion engine locally (instead of only in Modal sandboxes), you need:
+## Datasets
+
+This repo supports the following datasets:
+
+- **`tpch`** / **`tpcds`** — produced by DuckDB at a given `scale_factor`.
+- **`job`** — the Join Order Benchmark, a set of queries over a real snapshot of the IMDB database.
+
+## Local Execution & Development
+
+To build and run the patched DataFusion engine locally instead of on Modal, you need:
 
 1. **Rust toolchain** — install via [rustup](https://rustup.rs/)
 2. **Protocol Buffers compiler (`protoc`)**:
@@ -323,21 +331,23 @@ Then install with the `local` extra:
 uv sync --extra local
 ```
 
-This builds the patched DataFusion wheel from `datafusion_patched/` and installs the `datafusion` Python package into your environment. You can then `import datafusion` and use it locally for development and testing. This step is not required for normal usage — Modal sandboxes build the engine themselves.
+This builds the patched DataFusion wheel from `datafusion_patched/` and installs the `datafusion` Python package. This step is not required for normal (Modal) usage.
+
+To run the pipeline locally, pass `exec_local=True` to `optimize_queries`, `benchmark_plans`, `get_engine_plans`, `validate_queries`, or `generate_queries`. Benchmark data is prepared under `data/` automatically on first use — generated with DuckDB for `tpch`/`tpcds` (at the requested `scale_factor`), or downloaded for `job`.
 
 ## Citation
 
 If you find this work useful, please consider citing:
 
 ```bibtex
-@misc{erol2026makingdatabasesfaster,
-  title={Making Databases Faster with LLM Evolutionary Sampling},
-  author={Erol, Mehmet Hamza and Hao, Xiangpeng and Bianchi, Federico and Greco, Ciro and Tagliabue, Jacopo and Zou, James},
-  year={2026},
-  eprint={2602.10387},
-  archivePrefix={arXiv},
-  primaryClass={cs.DB},
-  url={https://arxiv.org/abs/2602.10387},
+@misc{erol2026testtimeoptimizationphysicalquery,
+    title={Test-Time Optimization of Physical Query Plans with LLMs}, 
+    author={Mehmet Hamza Erol and Xiangpeng Hao and Federico Bianchi and Ciro Greco and Jacopo Tagliabue and James Zou},
+    year={2026},
+    eprint={2602.10387},
+    archivePrefix={arXiv},
+    primaryClass={cs.DB},
+    url={https://arxiv.org/abs/2602.10387}, 
 }
 ```
 

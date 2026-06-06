@@ -2,6 +2,8 @@
 
 All public functions are exported from `dbplanbench.py`. Return types are dataclasses defined in `dbplanbench_types.py`.
 
+By default every operation runs on Modal (`exec_local=False`); the signatures and behavior below describe this default. To run locally instead, see [Local Execution](#local-execution).
+
 ---
 
 ## Functions
@@ -334,6 +336,15 @@ Examples:
 - `[patch]`: single optimization
 - `[patch_1, patch_2]`: top-2 candidates
 - `[None]`: patch unavailable
+
+---
+
+## Local Execution
+
+`optimize_queries`, `benchmark_plans`, `get_engine_plans`, `validate_queries`, and `generate_queries` accept `exec_local: bool = False`. The default (`False`) runs every operation on Modal, as documented above. Passing `exec_local=True` runs the same operations against a locally-built DataFusion engine instead of Modal.
+
+- Build the local engine once with `uv sync --extra local` (see the repo README's *Local Execution & Development* section). Without it, an `exec_local=True` call raises a clear `ImportError` telling you to install the extra.
+- Data is generated on first use: if the dataset's parquet tables aren't present under `data/`, they are generated for the in-use benchmark at the requested `scale_factor` (announced on stdout).
 
 ---
 

@@ -33,6 +33,7 @@ from dbplanbench_utils import (
     get_metric_value,
     log_line,
     data_folder_for_dataset,
+    ensure_local_data,
     plan_to_json,
     build_validation_stats,
     format_metric_stats,
@@ -53,16 +54,17 @@ def generate_queries(
     oversample_cap: float = 3.0,
     resume: bool = True,
     validate_kwargs: Optional[Dict[str, Any]] = None,
+    exec_local: bool = False,
     verbose: bool = True,
 ) -> QueryGenerationResult:
     """
-    Generate and validate SQL queries using LLM generation and Modal-based validation.
+    Generate and validate SQL queries using LLM generation.
 
     Iteratively generates queries via an LLM to satisfy the requested complexity
     distribution, then validates each query for determinism and correctness on the
     target dataset. Queries that produce empty result sets or non-deterministic
-    outputs (checked via multiple executions) are rejected. Schemas are fetched
-    via Modal; local datasets are not required.
+    outputs (checked via multiple executions) are rejected. Schema fetch and
+    validation run on Modal by default, or locally when ``exec_local=True``.
 
     Args:
         dataset: Dataset name (e.g., "tpch", "tpcds").
@@ -77,6 +79,9 @@ def generate_queries(
         oversample_cap: Upper bound on step-wise oversampling multiplier.
         resume: Reuse existing run-dir files when possible.
         validate_kwargs: Extra kwargs forwarded to the validation backend.
+        exec_local: Fetch the schema and validate generated queries locally
+            (via LocalRunner) instead of on Modal. Requires the ``local`` extra;
+            missing data is generated under ``data/`` on first use.
         verbose: Print progress and step summaries.
 
     Returns:
@@ -84,8 +89,8 @@ def generate_queries(
         counts), queries (list of SQL strings), and per-query metadata.
     """
     from query_gen.orchestrator import run_query_generation
-    if dataset.lower() not in {"tpch", "tpcds"}:
-        raise ValueError("dataset must be one of: tpch, tpcds")
+    if dataset.lower() not in {"tpch", "tpcds", "job"}:
+        raise ValueError("dataset must be one of: tpch, tpcds, job")
     if n_queries <= 0:
         raise ValueError("n_queries must be > 0")
     if max_concurrent_generations < 1:
@@ -122,6 +127,9 @@ def generate_queries(
     if sum(normalized_distribution.values()) <= 0:
         raise ValueError("complexity_distribution must sum to > 0")
 
+    if exec_local:
+        ensure_local_data(dataset.lower(), int(scale_factor))
+
     return run_query_generation(
         dataset=dataset.lower(),
         complexity_distribution=normalized_distribution,
@@ -135,6 +143,7 @@ def generate_queries(
         oversample_cap=float(oversample_cap),
         resume=bool(resume),
         validate_kwargs=dict(validate_kwargs or {}),
+        exec_local=bool(exec_local),
         verbose=bool(verbose),
     )
 
@@ -384,15 +393,16 @@ def _evaluate_and_curate_base_plans(
     base_sampling_data: Optional[List[Dict[str, Any]]],
     resume: bool,
     verbose: bool,
-) -> Tuple[Optional[List[Dict[str, Any]]], Optional[List[Optional[str]]]]:
-    """Benchmark base engine plans and produce a curated dataset for sampling.
+) -> Optional[List[Optional[str]]]:
+    """Benchmark base engine plans and write a curated dataset for sampling.
 
-    Tries to load existing curated data from disk when resuming.  Otherwise
+    Tries to reuse existing curated data on disk when resuming.  Otherwise
     benchmarks each base plan, checks for evaluation failures, and writes the
-    curated dataset to *curated_path*.
+    curated dataset to *curated_path* (the curated data is consumed from disk by
+    the sampling phase, so it is not returned).
 
-    Returns ``(curated_data, evaluation_failures)``.  *evaluation_failures* is
-    None when no fresh evaluation was needed (data loaded from disk or
+    Returns the per-query ``evaluation_failures`` list (``None`` entry = OK), or
+    ``None`` when no fresh evaluation was needed (data reused from disk or
     *base_sampling_data* exists).
     """
     curated_data: Optional[List[Dict[str, Any]]] = None
@@ -408,7 +418,7 @@ def _evaluate_and_curate_base_plans(
                     break
 
     if base_sampling_data is not None or curated_data is not None:
-        return curated_data, None
+        return None
 
     base_plan_entries = [
         PatchedPlan(base_plan=engine_plans[i], patch=[[]])
@@ -436,7 +446,7 @@ def _evaluate_and_curate_base_plans(
             evaluation_failures[i] = evaluation_result.get("error", "evaluation_failed") if isinstance(evaluation_result, dict) else "evaluation_failed"
 
     if any(err is not None for err in evaluation_failures):
-        return None, evaluation_failures
+        return evaluation_failures
 
     curated_data = []
     for i, q in enumerate(queries_list):
@@ -452,7 +462,7 @@ def _evaluate_and_curate_base_plans(
         }
         curated_data.append(entry)
     write_json(curated_path, curated_data)
-    return curated_data, None
+    return None
 
 
 def _run_optimization_sampling(
@@ -714,6 +724,7 @@ def optimize_queries(
     sampling_kwargs: Optional[Dict[str, Any]] = None,
     evaluation_kwargs: Optional[Dict[str, Any]] = None,
     get_full_metrics: bool = False,
+    exec_local: bool = False,
 ) -> OptimizationResult:
     """
     Optimize SQL queries using LLM-driven evolutionary sampling of execution plans.
@@ -753,6 +764,9 @@ def optimize_queries(
         evaluation_kwargs: Extra kwargs forwarded to evaluation.
         get_full_metrics: Collect detailed execution metrics (bytes scanned,
             join stats, memory usage) in addition to execution_time.
+        exec_local: Run validation and evaluation locally (via LocalRunner)
+            instead of on Modal. Requires the ``local`` extra; missing data is
+            generated under ``data/`` on first use.
 
     Returns:
         OptimizationResult with run_dir, summary (validation_stats, base_plan_sources,
@@ -800,8 +814,16 @@ def optimize_queries(
     evaluation_kwargs_local.pop("dataset", None)
     evaluation_kwargs_local.pop("n_runs", None)
 
+    # Thread exec_local into validation and evaluation kwargs.
+    if exec_local:
+        validate_kwargs_local["exec_local"] = True
+        evaluation_kwargs_local["exec_local"] = True
+
     if scale_factor is None:
         raise ValueError("scale_factor cannot be None")
+
+    if exec_local:
+        ensure_local_data(dataset, scale_factor)
 
     validate_scale = validate_kwargs_local.pop("scale_factor", None)
     evaluation_scale = evaluation_kwargs_local.pop("scale_factor", None)
@@ -968,7 +990,7 @@ def optimize_queries(
 
     # --- F: Evaluate base plans ---
     log_line(verbose, f"\n[Phase 2/{n_phases}] Benchmarking base plans...")
-    curated_data, evaluation_failures = _evaluate_and_curate_base_plans(
+    evaluation_failures = _evaluate_and_curate_base_plans(
         queries_list=queries_list,
         engine_plans=engine_plans,
         curated_path=curated_path,
@@ -1089,6 +1111,7 @@ def benchmark_plans(
     max_workers: int = 1,
     max_eval_workers: int = 8,
     get_full_metrics: bool = False,
+    exec_local: bool = False,
     verbose: bool = True,
     **kwargs,
 ) -> BenchmarkResult:
@@ -1111,6 +1134,9 @@ def benchmark_plans(
             ``max_workers * max_eval_workers``.
         get_full_metrics: Collect detailed execution metrics (bytes scanned,
             join stats, memory usage) in addition to execution_time.
+        exec_local: Evaluate locally (via LocalRunner) instead of on Modal.
+            Requires the ``local`` extra; missing data is generated under
+            ``data/`` on first use.
         verbose: Print progress messages.
         **kwargs: Passed through to the evaluation backend. Supports
             ``runner_kwargs`` (dict for ModalRunner constructor),
@@ -1159,7 +1185,12 @@ def benchmark_plans(
         else:
             raise TypeError(f"Expected PatchedPlan or dict, got {type(p).__name__}")
 
-    data_folder = data_folder_for_dataset(dataset)
+    if exec_local:
+        ensure_local_data(dataset, scale_factor)
+    data_folder = data_folder_for_dataset(dataset, exec_local=exec_local, scale_factor=scale_factor)
+
+    # Inject exec_local into kwargs so evaluate_plan_n_runs receives it.
+    kwargs["exec_local"] = exec_local
 
     total_evals = sum(len(p.patch) for p in normalized_plans)
     log_line(verbose, f"Benchmarking {len(normalized_plans)} plans ({total_evals} evaluations, {n_runs} runs each, scale_factor={scale_factor})")
@@ -1221,6 +1252,7 @@ def get_engine_plans(
     dataset: str,
     scale_factor: int = DEFAULT_SCALE_FACTOR,
     max_workers: int = 10,
+    exec_local: bool = False,
     verbose: bool = True,
     **kwargs,
 ) -> PlanningResult:
@@ -1236,6 +1268,9 @@ def get_engine_plans(
         dataset: Dataset name (e.g., "tpch", "tpcds").
         scale_factor: Scale factor for the Modal runner.
         max_workers: Max concurrent planning workers.
+        exec_local: Plan locally (via LocalRunner) instead of on Modal.
+            Requires the ``local`` extra; missing data is generated under
+            ``data/`` on first use.
         verbose: Print progress messages.
         **kwargs: Passed through to the planning backend. Supports
             ``runner_kwargs`` (dict for ModalRunner constructor),
@@ -1263,7 +1298,10 @@ def get_engine_plans(
         raise ValueError("scale_factor conflicts with runner_kwargs['scale_factor']")
     kwargs["runner_kwargs"]["scale_factor"] = scale_factor
 
-    data_folder = data_folder_for_dataset(dataset)
+    if exec_local:
+        ensure_local_data(dataset, scale_factor)
+    kwargs["exec_local"] = exec_local  # thread to the planning backend
+    data_folder = data_folder_for_dataset(dataset, exec_local=exec_local, scale_factor=scale_factor)
     plans: List[Optional[Dict[str, Any]]] = [None] * len(queries_list)
     errors: List[Optional[str]] = [None] * len(queries_list)
 
@@ -1318,6 +1356,7 @@ def benchmark_queries(
     max_workers: int = 1,
     max_eval_workers: int = 8,
     get_full_metrics: bool = False,
+    exec_local: bool = False,
     verbose: bool = True,
     **kwargs,
 ) -> BenchmarkResult:
@@ -1341,6 +1380,9 @@ def benchmark_queries(
             ``max_workers * max_eval_workers``.
         get_full_metrics: Collect detailed execution metrics (bytes scanned,
             join stats, memory usage) in addition to execution_time.
+        exec_local: Plan and evaluate locally (via LocalRunner) instead of on
+            Modal. Requires the ``local`` extra; missing data is generated under
+            ``data/`` on first use.
         verbose: Print progress messages.
         **kwargs: Passed through to planning and evaluation backends.
             Supports ``runner_kwargs`` (dict for ModalRunner constructor),
@@ -1380,6 +1422,7 @@ def benchmark_queries(
         dataset=dataset,
         scale_factor=scale_factor,
         max_workers=max_workers,
+        exec_local=exec_local,
         verbose=verbose,
         **kwargs,
     )
@@ -1410,6 +1453,7 @@ def benchmark_queries(
             max_workers=max_workers,
             max_eval_workers=max_eval_workers,
             get_full_metrics=get_full_metrics,
+            exec_local=exec_local,
             verbose=verbose,
             **kwargs,
         )
@@ -1781,6 +1825,7 @@ def validate_queries(
     scale_factor: int = DEFAULT_SCALE_FACTOR,
     n_determinism_retries: int = 3,
     max_workers: int = 10,
+    exec_local: bool = False,
     verbose: bool = True,
     **kwargs,
 ) -> QueryValidationResult:
@@ -1800,6 +1845,9 @@ def validate_queries(
         n_determinism_retries: Number of executions for determinism
             checking. Higher values increase confidence but cost more.
         max_workers: Max concurrent validation workers.
+        exec_local: Validate locally (via LocalRunner) instead of on Modal.
+            Requires the ``local`` extra; missing data is generated under
+            ``data/`` on first use.
         verbose: Print progress and summary.
         **kwargs: Passed through to the validation backend. Supports
             ``runner_kwargs`` (dict for ModalRunner constructor),
@@ -1828,6 +1876,9 @@ def validate_queries(
     ):
         raise ValueError("scale_factor conflicts with runner_kwargs['scale_factor']")
     kwargs["runner_kwargs"]["scale_factor"] = scale_factor
+
+    if exec_local:
+        ensure_local_data(dataset, scale_factor)
 
     plans: List[Optional[Dict[str, Any]]] = [None] * len(queries_list)
     errors: List[Optional[str]] = [None] * len(queries_list)
@@ -1858,6 +1909,7 @@ def validate_queries(
             dataset=dataset,
             n_determinism_retries=n_determinism_retries,
             verbose=False,
+            exec_local=exec_local,
             **kwargs,
         )
         category = _categorize(vr)

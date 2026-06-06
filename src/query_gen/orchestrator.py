@@ -32,13 +32,14 @@ def run_query_generation(
     resume: bool,
     validate_kwargs: Optional[Dict[str, Any]],
     verbose: bool,
+    exec_local: bool = False,
 ) -> QueryGenerationResult:
     """Orchestrate iterative query generation + validation and persist results.
 
-    Generates SQL queries via LLM, validates them on Modal (syntax, determinism,
-    non-empty result), and collects valid queries until the target complexity
-    distribution is met or *max_steps* is reached. Supports resume from
-    existing run-dir artifacts.
+    Generates SQL queries via LLM, validates them (syntax, determinism,
+    non-empty result) on Modal — or locally when ``exec_local=True`` — and
+    collects valid queries until the target complexity distribution is met or
+    *max_steps* is reached. Supports resume from existing run-dir artifacts.
 
     Args:
         dataset: Dataset name ("tpch" or "tpcds").
@@ -236,8 +237,9 @@ def run_query_generation(
     schema_result = submit_run_operation(
         operation=Operation.FETCH_SCHEMA,
         input_str="",
-        data_folder=data_folder_for_dataset(dataset),
+        data_folder=data_folder_for_dataset(dataset, exec_local=exec_local, scale_factor=scale_factor),
         runner_kwargs=runner_kwargs,
+        exec_local=exec_local,
         **fetch_kwargs,
     )
     if not schema_result or schema_result.get("error"):
@@ -291,6 +293,7 @@ def run_query_generation(
                 output_format="validation",
                 seen_queries=seen_queries,
                 verbose=verbose,
+                exec_local=exec_local,
                 **validate_kwargs_local,
             )
 

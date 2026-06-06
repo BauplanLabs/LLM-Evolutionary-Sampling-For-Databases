@@ -1,6 +1,5 @@
 import uuid
 import modal
-import os
 from pathlib import Path
 from enum import Enum
 from typing import Optional
@@ -9,6 +8,10 @@ from modal_controller.constants import S3_BUCKET_NAME, AWS_SECRET_NAME, DEFAULT_
 
 _MODULE_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _MODULE_DIR.parents[1]
+
+# Files concatenated (in order) ahead of an operation script to form the full
+# sandbox program: the DataFusion engine, then the shared operation builders.
+_OP_CONCAT_PREFIX = ("db_base.py", "operations/base_operation.py")
 
 class Operation(Enum):
     """Modal sandbox operation types, each mapping to a Python script."""
@@ -22,20 +25,27 @@ class ModalRunner:
     """Manages a Modal sandbox for running DataFusion operations.
 
     Builds a container image with the patched DataFusion engine and
-    TPC-H/TPC-DS data, then executes operations by concatenating
-    ``db_base.py`` with an operation script and running them in a sandbox.
+    TPC-H, TPC-DS, and JOB benchmark data, then executes operations by
+    concatenating ``db_base.py`` with an operation script and running them
+    in a sandbox.
     """
 
     def __init__(self, app_name: str, scale_factor: int = DEFAULT_SCALE_FACTOR, rebuild_image: bool = False):
         """Initialize a ModalRunner, looking up the Modal app and building the container image."""
         self.scale_factor = scale_factor
         self.app = modal.App.lookup(app_name, create_if_missing=True)
-        self.image = self._get_base_image(rebuild_image)
+        # Modal re-walks every add_local_dir(copy=True) tree on every Sandbox.create()
+        # to recompute the image's content hash (~12s + ~33% CPU with datafusion_patched/).
+        # Build the heavy image once, then reference it by id so subsequent sandbox
+        # creations skip the walk entirely (~70x faster per create).
+        heavy_image = self._get_base_image(rebuild_image)
+        heavy_image.build(self.app)
+        self.image = modal.Image.from_id(heavy_image.object_id)
     
     def _get_base_image(self, rebuild_image: bool = False):
-        """Build the Modal container image with DataFusion, dependencies, and TPC data."""
+        """Build the Modal container image with DataFusion, dependencies, and benchmark data."""
         datafusion_local = (_REPO_ROOT / "datafusion_patched").resolve()
-        gen_tpch_file_local = _MODULE_DIR / "generate_tpch_files.py"
+        gen_data_file_local = _MODULE_DIR / "generate_benchmark_data.py"
         return (modal.Image.debian_slim(force_build=rebuild_image)
                 .apt_install("build-essential", force_build=rebuild_image)
                 .apt_install("protobuf-compiler", force_build=rebuild_image)
@@ -53,18 +63,35 @@ class ModalRunner:
                 )
                 .pip_install('boto3', 'pyarrow', 'duckdb', 'pandas', force_build=rebuild_image)
                 .add_local_file(
-                    local_path=str(gen_tpch_file_local),
-                    remote_path="/app/generate_tpch_files.py", 
+                    local_path=str(gen_data_file_local),
+                    remote_path="/app/generate_benchmark_data.py",
                     copy=True
                 )
-                .run_commands(f"python /app/generate_tpch_files.py --scale-factor {self.scale_factor} --benchmark both --data-dir /tmp/data", force_build=rebuild_image)
+                # JOB is scaleless; generate it before the scale-specific TPC layers
+                # so its (large) layer caches across scale_factor changes.
+                .run_commands("python /app/generate_benchmark_data.py --benchmark job --data-dir /tmp/data", force_build=rebuild_image)
+                .run_commands(f"python /app/generate_benchmark_data.py --benchmark tpch --scale-factor {self.scale_factor} --data-dir /tmp/data", force_build=rebuild_image)
+                .run_commands(f"python /app/generate_benchmark_data.py --benchmark tpcds --scale-factor {self.scale_factor} --data-dir /tmp/data", force_build=rebuild_image)
         )
     
-    def _load_file(self, filepath: str) -> str:
-        """Read and return the text content of a local file."""
-        with open(filepath, 'r') as f:
-            return f.read()
-    
+    @staticmethod
+    def _inject_placeholders(code: str, placeholders: dict, data_folder: str,
+                             return_uuid: str, s3_bucket_name: str) -> str:
+        """Substitute the ``*_HERE`` tokens in the concatenated operation code.
+
+        Each ``placeholders`` key ``K`` replaces the token ``{K.upper()}_HERE``
+        with ``str(value)``; the data folder, UUID, and S3 bucket are
+        substituted last. Tokens with no corresponding placeholder are left as
+        literal strings (the operation scripts treat e.g. an unreplaced
+        ``'FULL_METRICS_HERE'`` as False via ``== 'True'``).
+        """
+        for key, value in placeholders.items():
+            code = code.replace(f"{key.upper()}_HERE", str(value))
+        code = code.replace("DATA_FOLDER_HERE", data_folder)
+        code = code.replace("UUID_HERE", return_uuid)
+        code = code.replace("S3_BUCKET_NAME_HERE", s3_bucket_name)
+        return code
+
     def run_operation(self, operation: Operation, input_str: str, data_folder: str = '/tmp/data/data_tpch',
             cpu: tuple = (4, 4), memory: tuple = (4 * 1024, 4 * 1024),
             env: Optional[dict] = None, sandbox_kwargs: Optional[dict] = None,
@@ -88,14 +115,9 @@ class ModalRunner:
                 "See README for setup instructions."
             )
 
-        operation_file = operation.value
-        
-        # Load base and operation files
-        base_code = self._load_file(os.path.join(os.path.dirname(__file__), "db_base.py"))
-        operation_code = self._load_file(os.path.join(os.path.dirname(__file__), operation_file))
-        
-        # Concatenate code (no more embedding large input_str)
-        full_code = base_code + "\n\n" + operation_code
+        # Concatenate engine + op builders + the operation script into one program.
+        files = (*_OP_CONCAT_PREFIX, operation.value)
+        full_code = "\n\n".join((_MODULE_DIR / f).read_text() for f in files)
 
         # Derive CPU count from allocation (use max value from the tuple)
         cpu_count = str(cpu[1]) if isinstance(cpu, tuple) else str(cpu)
@@ -107,18 +129,11 @@ class ModalRunner:
         env_dict = dict(env or {})
         env_dict.setdefault("RAYON_NUM_THREADS", cpu_count)
 
-        # Override placeholders
-        for key, value in placeholders.items():
-            placeholder = f"{key.upper()}_HERE"
-            full_code = full_code.replace(placeholder, str(value))
-
-        full_code = full_code.replace("DATA_FOLDER_HERE", data_folder)
-        
         return_uuid = str(uuid.uuid4())
-        full_code = full_code.replace("UUID_HERE", return_uuid)
-        
-        full_code = full_code.replace("S3_BUCKET_NAME_HERE", S3_BUCKET_NAME)
-        
+        full_code = self._inject_placeholders(
+            full_code, placeholders, data_folder, return_uuid, S3_BUCKET_NAME
+        )
+
         # Execute in Modal
         sb = modal.Sandbox.create(
             image=self.image,

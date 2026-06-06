@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from tqdm import tqdm
 
 from modal_controller.modal_runner import Operation
+from modal_controller.constants import DEFAULT_SCALE_FACTOR
 from modal_controller.utils import evaluate_plan_n_runs, validate_plan_result_set
 from dbplanbench_utils import write_json, log_line, data_folder_for_dataset, plan_to_json
 from sampling.utils import apply_patches_to_plan
@@ -19,6 +20,7 @@ def evaluate_sampled_plans(
     n_runs: int = 3,
     max_workers: int = 10,
     verbose: bool = True,
+    exec_local: bool = False,
     **kwargs
 ) -> str:
     """Validate and benchmark each sampled plan, writing results back in place.
@@ -35,6 +37,7 @@ def evaluate_sampled_plans(
         n_runs: Number of evaluation runs per valid plan.
         max_workers: Maximum concurrent evaluation workers.
         verbose: Print progress.
+        exec_local: If True, validate/evaluate locally instead of on Modal.
         **kwargs: Forwarded to validation and evaluation backends.
 
     Returns:
@@ -47,6 +50,10 @@ def evaluate_sampled_plans(
 
     if max_workers < 1:
         raise ValueError("max_workers must be at least 1")
+
+    # Local data folders are scale-specific; the scale comes from runner_kwargs
+    # (always set by callers, same source the Modal path uses).
+    scale_factor = (kwargs.get("runner_kwargs") or {}).get("scale_factor", DEFAULT_SCALE_FACTOR)
 
     def invalid_result(error_message: str) -> Dict[str, Any]:
         return {
@@ -67,11 +74,12 @@ def evaluate_sampled_plans(
         original_plan_str: str
     ) -> Dict[str, Any]:
 
-        data_folder = data_folder_for_dataset(dataset)
+        data_folder = data_folder_for_dataset(dataset, exec_local=exec_local, scale_factor=scale_factor)
 
         # Validation
         validation_error = validate_plan_result_set(
-            plan_str, original_plan_str, data_folder, n_retry=5, verbose=verbose, **kwargs
+            plan_str, original_plan_str, data_folder, n_retry=5, verbose=verbose,
+            exec_local=exec_local, **kwargs
         )
         if validation_error is not None:
             return invalid_result(validation_error)
@@ -84,6 +92,7 @@ def evaluate_sampled_plans(
                 data_folder,
                 n_runs,
                 verbose=verbose,
+                exec_local=exec_local,
                 **kwargs
             )
             if evaluation_stats.get("error", None):
@@ -178,8 +187,6 @@ def evaluate_sampled_plans(
             harvest(done, progress)
 
     progress.close()
-
-    total_futures = submitted
 
     for (query_index, sample_index), plan_result in plan_results.items():
         sampled_plan = sampled_data[query_index]["sampled_plans"][sample_index]

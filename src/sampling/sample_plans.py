@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import List, Dict, Any, Literal
+from typing import List, Dict, Any, Literal, Optional
 import copy
 from dataclasses import dataclass, field
 
@@ -183,6 +183,7 @@ def sample_plans_from_file(
     n_samples: int = 5,
     model: str = "gpt-5",
     verbose: bool = False,
+    completion_kwargs: Optional[Dict[str, Any]] = None,
     **kwargs,
 ) -> str:
     """Sample N LLM optimization attempts per query from an existing plan collection.
@@ -221,7 +222,7 @@ def sample_plans_from_file(
             "sampled_plans": base_plans,
         })
 
-    optimizer = GPTPlanOptimizer(model=model)
+    optimizer = GPTPlanOptimizer(model=model, completion_kwargs=completion_kwargs)
 
     queries_batch = [
         (
@@ -252,8 +253,11 @@ def sample_plans_from_file(
                 else:
                     new_sampled_plan["is_valid"] = True
                     new_sampled_plan["error_message"] = None
-                # TODO: consider adding the model response as well for debugging
-                # new_sampled_plan["model_response"] = generation_results.model_response
+                new_sampled_plan["model_response"] = generation_results.model_response
+                new_sampled_plan["reasoning_content"] = generation_results.reasoning_content
+                new_sampled_plan["prompt_tokens"] = generation_results.prompt_tokens
+                new_sampled_plan["completion_tokens"] = generation_results.completion_tokens
+                new_sampled_plan["total_tokens"] = generation_results.total_tokens
 
                 final_sampled_plans.append(new_sampled_plan)
         sampling_result["sampled_plans"] = final_sampled_plans

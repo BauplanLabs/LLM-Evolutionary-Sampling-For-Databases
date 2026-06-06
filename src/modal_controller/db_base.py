@@ -1,3 +1,12 @@
+# DataFusion engine wrapper, shared by two execution transports:
+#   - Modal: modal_runner.py reads this file as TEXT and concatenates it (ahead
+#     of operations/base_operation.py and an operations/<op>.py script) into one
+#     script run inside a sandbox. So every top-level import here must exist in
+#     the Modal image (datafusion + pyarrow do), and the placeholder constants
+#     below are string-replaced by modal_runner before execution.
+#   - Local: local_runner.py imports this module in-process. The datafusion
+#     import therefore requires the optional ``local`` extra, which is why local
+#     code is only imported behind exec_local (see utils._get_local_runner).
 from collections import namedtuple
 import glob
 from datafusion import ExecutionPlan, SessionContext, SessionConfig
@@ -22,7 +31,7 @@ class DataFusionDB:
     and serialized plan execution.
     """
 
-    def __init__(self, data_folder: str, cpu_limit: str, verbose: bool = True):
+    def __init__(self, data_folder: str, cpu_limit: str, verbose: bool = True) -> None:
         """Initialize the DB wrapper, registering parquet tables from *data_folder*."""
         self.data_folder = data_folder
         self.parquet_files = glob.glob(f"{data_folder}/*.parquet")
@@ -33,7 +42,7 @@ class DataFusionDB:
         self.verbose = verbose
         self.ctx = self.get_new_embedded_db()
 
-    def get_new_embedded_db(self):
+    def get_new_embedded_db(self) -> SessionContext:
         """Create a fresh SessionContext with registered parquet tables."""
         config = SessionConfig().set("datafusion.sql_parser.dialect", "postgresql")
         
@@ -55,7 +64,7 @@ class DataFusionDB:
 
         return ctx
 
-    def validate_syntax(self, query) -> bool:
+    def validate_syntax(self, query: str) -> bool:
         """Return True if *query* parses and plans successfully."""
         try:
             df = self.ctx.sql(query)
@@ -67,7 +76,7 @@ class DataFusionDB:
 
         return False
 
-    def execute_sql_query_directly(self, query):
+    def execute_sql_query_directly(self, query: str) -> QueryResult:
         """Execute *query* via DataFusion SQL and return a QueryResult."""
         arrow_result = None
         is_error = False
@@ -102,7 +111,7 @@ class DataFusionDB:
 
         return QueryResult(data=data, time=elapsed_time, is_exec_error=is_error, error_message=error_message)
 
-    def execute_sql_query_through_serialization(self, query):
+    def execute_sql_query_through_serialization(self, query: str) -> QueryResult:
         """Serialize *query* to a physical plan and execute the plan."""
         plan = self.serialize_query_to_physical_plan(query)
         if not plan:
@@ -113,7 +122,7 @@ class DataFusionDB:
 
         return self.execute_serialized_physical_plan(plan)
         
-    def serialize_query_to_physical_plan(self, query) -> str | None:
+    def serialize_query_to_physical_plan(self, query: str) -> str | None:
         """Return the succinct JSON representation of *query*'s physical plan, or None."""
         try:
             return self.ctx.sql(query).execution_plan().to_succinct_json()

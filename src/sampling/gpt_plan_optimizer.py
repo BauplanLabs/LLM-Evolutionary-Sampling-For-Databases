@@ -16,19 +16,29 @@ class GenerationResult:
     """Result of a single LLM optimization attempt.
 
     Attributes:
-        model_response: Raw model response text (response + reasoning).
+        model_response: Raw model response text.
+        reasoning_content: Model reasoning trace, or a placeholder if unavailable.
         error_message: Error string if generation failed, else None.
         sampled_patches: Extracted JSON Patch ops, or None on failure.
+        prompt_tokens: Input token count from LLM usage stats, or None.
+        completion_tokens: Output token count from LLM usage stats, or None.
+        total_tokens: Total token count from LLM usage stats, or None.
     """
     model_response: str
+    reasoning_content: str
     error_message: Optional[str]
     sampled_patches: Optional[List[Dict]]
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
 
 class GPTPlanOptimizer:
     """Generates JSON Patch optimizations for SQL execution plans via LiteLLM."""
 
-    def __init__(self, model: str = "gpt-5", api_key: Optional[str] = None):
+    def __init__(self, model: str = "gpt-5", api_key: Optional[str] = None,
+                 completion_kwargs: Optional[Dict[str, Any]] = None):
         self.model = model
+        self.completion_kwargs = completion_kwargs or {}
         if api_key:
             litellm.api_key = api_key
 
@@ -64,6 +74,7 @@ class GPTPlanOptimizer:
                                 {"role": "user", "content": user_prompt}
                             ],
                             temperature=1,
+                            **self.completion_kwargs,
                         )
                         last_error = None
                         break
@@ -80,11 +91,21 @@ class GPTPlanOptimizer:
                 except AttributeError:
                     reasoning_content = "<No reasoning content available>"
 
+                # Capture token usage from the litellm response (if present).
+                usage = getattr(response, "usage", None)
+                prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
+                completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
+                total_tokens = getattr(usage, "total_tokens", None) if usage else None
+
                 sampled_patches = extract_patches_from_response(response_content, verbose=verbose)
                 generation_result = GenerationResult(
-                    model_response=f"Response:\n--\n{response_content}\nReasoning:\n--\n{reasoning_content}",
+                    model_response=response_content or "",
+                    reasoning_content=reasoning_content or "",
                     error_message=None,
-                    sampled_patches=sampled_patches
+                    sampled_patches=sampled_patches,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
                 )
                 
             except Exception as e:
@@ -95,6 +116,7 @@ class GPTPlanOptimizer:
                     # Re-enable traceback prints above for low-level debugging.
                 generation_result = GenerationResult(
                     model_response="",
+                    reasoning_content="",
                     error_message=str(e),
                     sampled_patches=None
                 )

@@ -12,7 +12,7 @@ from dbplanbench_utils import log_line, data_folder_for_dataset, plan_to_json, w
 
 @dataclass
 class ValidationResult:
-    """Result of validating a single SQL query on Modal.
+    """Result of validating a single SQL query.
 
     Attributes:
         error: Infrastructure/runtime error string, else None. This captures also the
@@ -41,19 +41,21 @@ def check_query_validity(
     dataset: str = "tpch",
     n_determinism_retries: int = 3,
     verbose: bool = True,
+    exec_local: bool = False,
     **kwargs
 ) -> ValidationResult:
-    """Validate a SQL query on Modal for syntax, executability, and determinism.
+    """Validate a SQL query for syntax, executability, and determinism.
 
-    Sends the query to Modal for planning/execution, then checks determinism
-    via ``validate_plan_result_set`` (executes the plan multiple times and
-    compares result sets).
+    Plans/executes the query (on Modal, or locally when *exec_local* is True),
+    then checks determinism via ``validate_plan_result_set`` (executes the plan
+    multiple times and compares result sets).
 
     Args:
         query: SQL query string.
         dataset: Dataset to validate against.
         n_determinism_retries: Number of executions for determinism check.
         verbose: Print validation errors.
+        exec_local: If True, validate locally via LocalRunner instead of Modal.
         **kwargs: Forwarded to ``submit_run_operation``.
 
     Returns:
@@ -75,13 +77,17 @@ def check_query_validity(
             is_nondeterministic=False
         )
 
-    data_folder = data_folder_for_dataset(dataset)
+    # Local data folders are scale-specific; the scale comes from runner_kwargs
+    # (always set by callers, same source the Modal path uses).
+    scale_factor = (kwargs.get("runner_kwargs") or {}).get("scale_factor", DEFAULT_SCALE_FACTOR)
+    data_folder = data_folder_for_dataset(dataset, exec_local=exec_local, scale_factor=scale_factor)
 
     result = submit_run_operation(
         operation=Operation.VALIDATE,
         input_str=query,
         data_folder=data_folder,
-        n_retry=1,
+        n_retry=5,
+        exec_local=exec_local,
         **kwargs
     )
 
@@ -96,8 +102,9 @@ def check_query_validity(
         plan_json = plan_to_json(result["plan"])
         validation_err = validate_plan_result_set(
             plan_json, plan_json, data_folder,
-            n_retry=1,
+            n_retry=5,
             n_determinism_retries=n_determinism_retries,
+            exec_local=exec_local,
             **kwargs,
         )
         if validation_err is not None:
@@ -163,12 +170,14 @@ def validate_queries(
     seen_queries: Optional[Set[str]] = None,
     verbose: bool = True,
     log_context: str = "generation",
+    exec_local: bool = False,
     **kwargs
 ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
-    """Validate generated queries concurrently on Modal and save results.
+    """Validate generated queries concurrently and save results.
 
     Each query is checked for syntax, executability, empty result, and
-    determinism. Duplicates (against *seen_queries*) are rejected.
+    determinism (on Modal, or locally when ``exec_local=True``). Duplicates
+    (against *seen_queries*) are rejected.
 
     Args:
         input_file: JSON file with generated queries (id, query, complexity).
@@ -182,8 +191,9 @@ def validate_queries(
         seen_queries: Set of already-accepted queries (updated in place).
         verbose: Print progress.
         log_context: Label for summary messages ("generation" or "optimization").
-        **kwargs: Forwarded to Modal calls (``runner_kwargs`` merged with
-            *scale_factor*).
+        exec_local: Validate locally (via LocalRunner) instead of on Modal.
+        **kwargs: Forwarded to the validation backend (``runner_kwargs`` merged
+            with *scale_factor*).
 
     Returns:
         ``query_to_data`` dict (format=plans) or list of validation dicts.
@@ -224,12 +234,13 @@ def validate_queries(
         if log_per_query:
             log_line(verbose, f"Query {query_id+1} (complexity {complexity})")
         
-        # validate if the query is valid by sending it to the Modal endpoint
+        # validate the query (on Modal, or locally when exec_local=True)
         validation_result = check_query_validity(
             query=new_query,
             dataset=dataset,
             runner_kwargs=runner_kwargs,
             verbose=log_per_query,
+            exec_local=exec_local,
             **kwargs_local
         )
         

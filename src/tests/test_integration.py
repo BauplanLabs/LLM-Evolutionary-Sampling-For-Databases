@@ -1,8 +1,12 @@
-"""Integration tests that exercise the full pipeline via Modal sandboxes.
+"""Full-pipeline tests for the public API.
 
-Run integration tests:  pytest -m integration -v
-Run unit tests only:    pytest -m "not integration" -v
-Run everything:         pytest -v
+Tests that hit real Modal sandboxes are marked ``@modal`` (skipped by default,
+and they cost money); the remaining tests are mocked and run in the default
+fast suite.
+
+Run the real-Modal tests:  pytest -m modal -v
+Run the fast suite only:   pytest -m "not modal and not llm" -v
+Run everything:            pytest -v
 """
 
 from __future__ import annotations
@@ -34,7 +38,12 @@ JOIN_QUERY = (
 AGG_QUERY = "SELECT n_regionkey, COUNT(*) AS cnt FROM nation GROUP BY n_regionkey"
 INVALID_QUERY = "SELECT * FROM nonexistent_table_xyz_abc"
 
-integration = pytest.mark.integration
+# kind_type is one of the smallest JOB tables (a handful of rows).
+JOB_QUERY = "SELECT id, kind FROM kind_type"
+
+# All Modal-hitting tests below are tagged with this; mocked tests are left
+# unmarked so they run in the default fast suite.
+modal = pytest.mark.modal
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +73,7 @@ def join_plan():
 # ===================================================================
 
 class TestGetEnginePlansIntegration:
-    @integration
+    @modal
     def test_single_valid_query(self):
         result = get_engine_plans(
             [SIMPLE_QUERY], dataset=DATASET, scale_factor=SCALE_FACTOR, verbose=False,
@@ -75,7 +84,7 @@ class TestGetEnginePlansIntegration:
         assert result.plans[0] is not None
         assert result.errors[0] is None
 
-    @integration
+    @modal
     def test_plan_is_dict_with_structure(self):
         result = get_engine_plans(
             [SIMPLE_QUERY], dataset=DATASET, scale_factor=SCALE_FACTOR, verbose=False,
@@ -85,7 +94,7 @@ class TestGetEnginePlansIntegration:
         # Engine plans have a "structure" key used by patch application
         assert "structure" in plan
 
-    @integration
+    @modal
     def test_invalid_query_gives_error(self):
         result = get_engine_plans(
             [INVALID_QUERY], dataset=DATASET, scale_factor=SCALE_FACTOR, verbose=False,
@@ -93,7 +102,7 @@ class TestGetEnginePlansIntegration:
         # Either plans[0] is None or errors[0] is set
         assert result.plans[0] is None or result.errors[0] is not None
 
-    @integration
+    @modal
     def test_multiple_queries(self):
         result = get_engine_plans(
             [SIMPLE_QUERY, JOIN_QUERY, AGG_QUERY],
@@ -104,7 +113,7 @@ class TestGetEnginePlansIntegration:
         assert all(p is not None for p in result.plans)
         assert all(e is None for e in result.errors)
 
-    @integration
+    @modal
     def test_mixed_valid_invalid(self):
         result = get_engine_plans(
             [SIMPLE_QUERY, INVALID_QUERY],
@@ -117,7 +126,7 @@ class TestGetEnginePlansIntegration:
         # Invalid query fails
         assert result.plans[1] is None or result.errors[1] is not None
 
-    @integration
+    @modal
     def test_result_lengths_match_input(self):
         queries = [SIMPLE_QUERY, FILTER_QUERY, JOIN_QUERY, AGG_QUERY]
         result = get_engine_plans(
@@ -128,11 +137,30 @@ class TestGetEnginePlansIntegration:
 
 
 # ===================================================================
+# JOB dataset on Modal
+# ===================================================================
+
+@modal
+class TestJobOnModal:
+    """JOB is baked into the Modal image at build time; verify a JOB query
+    reads data_job and plans in the sandbox (covers the in-build download)."""
+
+    def test_job_query_plans_on_modal(self):
+        result = get_engine_plans(
+            [JOB_QUERY], dataset="job", scale_factor=SCALE_FACTOR, verbose=False,
+        )
+        assert isinstance(result, PlanningResult)
+        assert result.plans[0] is not None, f"JOB planning failed: {result.errors[0]}"
+        assert result.errors[0] is None
+        assert "structure" in result.plans[0]
+
+
+# ===================================================================
 # benchmark_plans
 # ===================================================================
 
 class TestBenchmarkPlansIntegration:
-    @integration
+    @modal
     def test_basic_benchmark(self, simple_plan):
         pp = PatchedPlan(base_plan=simple_plan, patch=[[]])
         result = benchmark_plans(
@@ -143,7 +171,7 @@ class TestBenchmarkPlansIntegration:
         assert len(result.results) == 1
         assert len(result.results[0]) == 1
 
-    @integration
+    @modal
     def test_measurement_has_benchmark_stats(self, simple_plan):
         pp = PatchedPlan(base_plan=simple_plan, patch=[[]])
         result = benchmark_plans(
@@ -155,7 +183,7 @@ class TestBenchmarkPlansIntegration:
         assert "n_runs" in m
         assert m["n_runs"] >= 1
 
-    @integration
+    @modal
     def test_execution_time_stats_structure(self, simple_plan):
         pp = PatchedPlan(base_plan=simple_plan, patch=[[]])
         result = benchmark_plans(
@@ -173,7 +201,7 @@ class TestBenchmarkPlansIntegration:
         assert et["min"] > 0
         assert et["max"] >= et["min"]
 
-    @integration
+    @modal
     def test_no_get_full_metrics_by_default(self, simple_plan):
         pp = PatchedPlan(base_plan=simple_plan, patch=[[]])
         result = benchmark_plans(
@@ -185,7 +213,7 @@ class TestBenchmarkPlansIntegration:
         assert "bytes_scanned" not in bs
         assert "join_time_s_sum" not in bs
 
-    @integration
+    @modal
     def test_get_full_metrics_on_join(self, join_plan):
         pp = PatchedPlan(base_plan=join_plan, patch=[[]])
         result = benchmark_plans(
@@ -203,7 +231,7 @@ class TestBenchmarkPlansIntegration:
             assert "all_runs" in bs[key]
             assert "min" in bs[key]
 
-    @integration
+    @modal
     def test_get_full_metrics_on_simple_query(self, simple_plan):
         pp = PatchedPlan(base_plan=simple_plan, patch=[[]])
         result = benchmark_plans(
@@ -215,7 +243,7 @@ class TestBenchmarkPlansIntegration:
         # Even simple queries should have bytes_scanned
         assert "bytes_scanned" in bs
 
-    @integration
+    @modal
     def test_none_patch_skipped(self, simple_plan):
         pp = PatchedPlan(base_plan=simple_plan, patch=[[], None])
         result = benchmark_plans(
@@ -229,7 +257,7 @@ class TestBenchmarkPlansIntegration:
         skipped = result.results[0][1]
         assert "error" in skipped or "skipped" in skipped
 
-    @integration
+    @modal
     def test_multiple_plans(self, simple_plan, join_plan):
         pp1 = PatchedPlan(base_plan=simple_plan, patch=[[]])
         pp2 = PatchedPlan(base_plan=join_plan, patch=[[]])
@@ -240,7 +268,7 @@ class TestBenchmarkPlansIntegration:
         assert len(result.results) == 2
         assert all("benchmark_stats" in r[0] for r in result.results)
 
-    @integration
+    @modal
     def test_output_file(self, simple_plan, tmp_path):
         pp = PatchedPlan(base_plan=simple_plan, patch=[[]])
         outfile = str(tmp_path / "benchmark_result.json")
@@ -260,7 +288,7 @@ class TestBenchmarkPlansIntegration:
 # ===================================================================
 
 class TestBenchmarkQueriesIntegration:
-    @integration
+    @modal
     def test_valid_query(self):
         result = benchmark_queries(
             [SIMPLE_QUERY], dataset=DATASET, scale_factor=SCALE_FACTOR,
@@ -273,7 +301,7 @@ class TestBenchmarkQueriesIntegration:
         assert "benchmark_stats" in m
         assert "execution_time" in m["benchmark_stats"]
 
-    @integration
+    @modal
     def test_invalid_query_reports_planning_error(self):
         result = benchmark_queries(
             [INVALID_QUERY], dataset=DATASET, scale_factor=SCALE_FACTOR,
@@ -284,7 +312,7 @@ class TestBenchmarkQueriesIntegration:
         assert "error" in err_entry
         assert "planning_failed" in err_entry["error"]
 
-    @integration
+    @modal
     def test_mixed_valid_invalid(self):
         result = benchmark_queries(
             [SIMPLE_QUERY, INVALID_QUERY],
@@ -297,7 +325,7 @@ class TestBenchmarkQueriesIntegration:
         # Invalid query has error
         assert "error" in result.results[1][0]
 
-    @integration
+    @modal
     def test_get_full_metrics(self):
         result = benchmark_queries(
             [JOIN_QUERY], dataset=DATASET, scale_factor=SCALE_FACTOR,
@@ -307,7 +335,7 @@ class TestBenchmarkQueriesIntegration:
         assert "execution_time" in bs
         assert "bytes_scanned" in bs
 
-    @integration
+    @modal
     def test_output_file(self, tmp_path):
         outfile = str(tmp_path / "bq_result.json")
         result = benchmark_queries(
@@ -319,7 +347,7 @@ class TestBenchmarkQueriesIntegration:
         data = json.loads(Path(outfile).read_text())
         assert isinstance(data, list) and len(data) == 1
 
-    @integration
+    @modal
     def test_multiple_queries(self):
         result = benchmark_queries(
             [SIMPLE_QUERY, JOIN_QUERY, AGG_QUERY],
@@ -331,9 +359,10 @@ class TestBenchmarkQueriesIntegration:
 
 
 # ===================================================================
-# Plan structure and patch application (no Modal)
+# Plan structure and patch application (on a real engine plan, via Modal)
 # ===================================================================
 
+@modal
 class TestPlanPatchApplication:
     def test_noop_patch_preserves_plan(self, simple_plan):
         from sampling.utils import apply_patches_to_plan
@@ -597,7 +626,7 @@ class TestValidateQueriesInputValidation:
 # validate_queries end-to-end (requires Modal)
 # ===================================================================
 
-@integration
+@modal
 class TestValidateQueriesEndToEnd:
     def test_valid_query(self):
         result = validate_queries(

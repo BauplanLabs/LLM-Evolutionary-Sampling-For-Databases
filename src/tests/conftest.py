@@ -12,7 +12,20 @@ def pytest_configure(config):
     if env_file.exists():
         load_dotenv(env_file, override=False)
 
-    config.addinivalue_line(
-        "markers",
-        "integration: tests that make real Modal/S3 calls (deselect with -m 'not integration')",
-    )
+    # Test taxonomy. Unmarked tests are fast, in-process unit tests with no
+    # external dependencies and run by default. The markers below classify the
+    # tests that need something extra, so they can be selected or deselected:
+    #
+    #   default fast suite :  pytest -m "not modal and not llm"
+    #   real Modal ($)     :  pytest -m modal
+    #   local-engine tests :  pytest -m local
+    #   real LLM calls ($) :  pytest -m llm
+    for marker in (
+        "modal: needs real Modal sandboxes and AWS/S3 credentials (costs money); "
+        "deselect with -m 'not modal', run with -m modal",
+        "local: needs the optional DataFusion engine (uv sync --extra local); runs "
+        "in-process with no cloud, and auto-skips if datafusion is not installed",
+        "llm: makes real LLM API calls (costs credits); excluded from the default "
+        "suite and auto-skips without an API key; run with -m llm",
+    ):
+        config.addinivalue_line("markers", marker)

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
 import pytest
+
+from unittest.mock import patch
 
 from dbplanbench_utils import (
     normalize_config,
@@ -15,6 +18,7 @@ from dbplanbench_utils import (
     get_evaluation_stats,
     log_line,
     data_folder_for_dataset,
+    ensure_local_data,
     plan_to_json,
     get_metric_value,
     build_validation_stats,
@@ -147,6 +151,112 @@ class TestDataFolderForDataset:
 
     def test_arbitrary(self):
         assert data_folder_for_dataset("custom") == "/tmp/data/data_custom"
+
+    def test_modal_path_ignores_scale_factor(self):
+        # The scale factor lives in the Modal image, not the path, so encoding
+        # it here would needlessly change the path (and the image).
+        assert data_folder_for_dataset("tpch", scale_factor=3) == "/tmp/data/data_tpch"
+
+    def test_local_scaleless_has_no_suffix(self):
+        # A scaleless dataset (e.g. a future fixed dataset like IMDB/JOB) passes
+        # scale_factor=None and gets a plain folder name.
+        local = data_folder_for_dataset("tpch", exec_local=True)
+        assert local != "/tmp/data/data_tpch"
+        assert os.path.isabs(local)
+        assert local.endswith(os.path.join("data", "data_tpch"))
+
+    def test_local_scaled_gets_sf_suffix(self):
+        # A scaled dataset gets a _sf<N> suffix so every scale coexists locally.
+        local = data_folder_for_dataset("tpch", exec_local=True, scale_factor=3)
+        assert os.path.isabs(local)
+        assert local.endswith(os.path.join("data", "data_tpch_sf3"))
+
+    def test_local_distinct_folder_per_scale(self):
+        sf1 = data_folder_for_dataset("tpch", exec_local=True, scale_factor=1)
+        sf3 = data_folder_for_dataset("tpch", exec_local=True, scale_factor=3)
+        assert sf1 != sf3
+        assert sf1.endswith("data_tpch_sf1")
+        assert sf3.endswith("data_tpch_sf3")
+
+    def test_job_is_scaleless_local(self):
+        assert data_folder_for_dataset("job", exec_local=True).endswith(
+            os.path.join("data", "data_job"))
+        assert data_folder_for_dataset("job", exec_local=True, scale_factor=3).endswith(
+            os.path.join("data", "data_job"))
+
+    def test_job_modal_path(self):
+        assert data_folder_for_dataset("job") == "/tmp/data/data_job"
+
+
+# ---------------------------------------------------------------------------
+# ensure_local_data
+# ---------------------------------------------------------------------------
+
+def _fake_generate(dataset, factor=None, base_data_dir=None, **kwargs):
+    """Stand-in for generate_benchmark_data: writes a dummy parquet table."""
+    d = os.path.join(base_data_dir, f"data_{dataset}")
+    os.makedirs(d, exist_ok=True)
+    open(os.path.join(d, "lineitem.parquet"), "w").close()
+
+
+class TestEnsureLocalData:
+    def test_noop_when_data_present(self, tmp_path):
+        """Existing scale-keyed folder -> return it, do not regenerate."""
+        (tmp_path / "data_tpch_sf3").mkdir()
+        (tmp_path / "data_tpch_sf3" / "lineitem.parquet").touch()
+        with patch("modal_controller.constants.LOCAL_DATA_DIR", str(tmp_path)), \
+             patch("modal_controller.generate_benchmark_data.generate_benchmark_data") as gen:
+            folder = ensure_local_data("tpch", 3)
+        gen.assert_not_called()
+        assert folder == str(tmp_path / "data_tpch_sf3")
+
+    def test_generates_in_use_benchmark_at_scale_when_missing(self, tmp_path):
+        """No data folder -> generate exactly that dataset at the given scale,
+        then atomically place it at the scale-keyed folder under LOCAL_DATA_DIR."""
+        with patch("modal_controller.constants.LOCAL_DATA_DIR", str(tmp_path)), \
+             patch("modal_controller.generate_benchmark_data.generate_benchmark_data",
+                   side_effect=_fake_generate) as gen:
+            folder = ensure_local_data("tpcds", 7)
+        gen.assert_called_once()
+        assert gen.call_args.args[0] == "tpcds"
+        assert gen.call_args.kwargs.get("factor") == 7
+        # Landed at the scale-keyed folder; no leftover temp generation dirs.
+        assert folder == str(tmp_path / "data_tpcds_sf7")
+        assert os.path.exists(os.path.join(folder, "lineitem.parquet"))
+        assert not [p for p in tmp_path.iterdir() if p.name.startswith(".tpcds_gen_")]
+
+    def test_different_scales_do_not_collide(self, tmp_path):
+        """Generating sf=1 then sf=2 yields two distinct folders; the second
+        generation is not short-circuited by the first."""
+        with patch("modal_controller.constants.LOCAL_DATA_DIR", str(tmp_path)), \
+             patch("modal_controller.generate_benchmark_data.generate_benchmark_data",
+                   side_effect=_fake_generate) as gen:
+            folder_sf1 = ensure_local_data("tpch", 1)
+            folder_sf2 = ensure_local_data("tpch", 2)
+        assert folder_sf1 != folder_sf2
+        assert folder_sf1 == str(tmp_path / "data_tpch_sf1")
+        assert folder_sf2 == str(tmp_path / "data_tpch_sf2")
+        assert gen.call_count == 2
+        assert {c.kwargs.get("factor") for c in gen.call_args_list} == {1, 2}
+
+    def test_generates_job_scaleless(self, tmp_path):
+        """job generates into a scaleless data_job folder (placeholder sf ignored)."""
+        with patch("modal_controller.constants.LOCAL_DATA_DIR", str(tmp_path)), \
+             patch("modal_controller.generate_benchmark_data.generate_benchmark_data",
+                   side_effect=_fake_generate) as gen:
+            folder = ensure_local_data("job", 3)
+        gen.assert_called_once()
+        assert gen.call_args.args[0] == "job"
+        assert folder == str(tmp_path / "data_job")
+        assert os.path.exists(os.path.join(folder, "lineitem.parquet"))
+
+    def test_rejects_unsupported_dataset(self, tmp_path):
+        """Unsupported dataset -> clear ValueError before any generation."""
+        with patch("modal_controller.constants.LOCAL_DATA_DIR", str(tmp_path)), \
+             patch("modal_controller.generate_benchmark_data.generate_benchmark_data") as gen:
+            with pytest.raises(ValueError, match="tpch"):
+                ensure_local_data("mysql", 3)
+        gen.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

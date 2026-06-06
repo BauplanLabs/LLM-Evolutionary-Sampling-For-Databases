@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, TYPE_CHECKING
 import boto3
 import json
 import pandas as pd
@@ -9,6 +9,9 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from modal_controller.modal_runner import ModalRunner, Operation
 from modal_controller.constants import *
+
+if TYPE_CHECKING:
+    from modal_controller.local_runner import LocalRunner
 
 
 def get_s3_result(uuid: str, operation: Operation, bucket_name: Optional[str] = None) -> dict:
@@ -88,62 +91,124 @@ def validate_plan_result_set(
     data_folder: str,
     n_retry: int = 5,
     n_determinism_retries: int = 3,
+    exec_local: bool = False,
     **kwargs,
 ) -> Optional[str]:
     """Execute *candidate_plan_str* and *baseline_plan_str* and compare result sets.
 
-    Runs the candidate plan *n_determinism_retries* times sequentially to
-    verify determinism, and compares the first run against the baseline for
-    correctness. Returns None if all comparisons match, or an error message
-    string on execution failure, result-set mismatch, or non-determinism.
-    Memory for result_data is freed after each comparison.
+    Submits 1 baseline EXECUTE + ``n_determinism_retries`` candidate EXECUTEs
+    via a per-call ThreadPoolExecutor (parallel on Modal; serialized locally to
+    avoid single-machine contention), then stream-compares the results as each
+    one arrives (compare-as-you-fetch). Holds at most ~2-3 result_data string
+    references in memory at any time.
+
+    Compare semantics:
+      - The first candidate run to arrive becomes the "primary candidate"
+        that defines the determinism reference.
+      - baseline ↔ primary candidate  → correctness check.
+      - primary candidate ↔ each other candidate run → determinism check.
+
+    Returns None on success, or an error string on execution failure,
+    result-set mismatch, or non-determinism. n_retry defaults to 5 because
+    these EXECUTEs are one-shot (no R-redundancy below them); eval-phase
+    EXECUTEs use the submit_run_operation default of 2 (R=n_runs absorbs
+    transient flakes there). When *exec_local* is True, the EXECUTEs run via
+    LocalRunner instead of Modal.
     """
-    cand = None
-    base = None
-    first_cand_data = None
-    try:
-        base = submit_run_operation(
-            Operation.EXECUTE, baseline_plan_str, data_folder, n_retry=n_retry, **kwargs
+    n_total = 1 + n_determinism_retries  # 1 baseline + N candidate EXECUTEs
+
+    def _submit_one(kind: str, plan_str: str) -> tuple:
+        r = submit_run_operation(
+            Operation.EXECUTE, plan_str, data_folder, n_retry=n_retry,
+            exec_local=exec_local, **kwargs,
         )
-        if not base or base.get("error"):
-            return f"Baseline execution failed: {(base or {}).get('error', 'Unknown error')}"
+        return kind, r
 
-        for i in range(n_determinism_retries):
-            cand = submit_run_operation(
-                Operation.EXECUTE, candidate_plan_str, data_folder, n_retry=n_retry, **kwargs
-            )
-            if not cand or cand.get("error"):
-                return f"Candidate execution failed: {(cand or {}).get('error', 'Unknown error')}"
+    baseline_data: Optional[str] = None       # set once baseline EXECUTE arrives
+    primary_cand_data: Optional[str] = None   # set by the FIRST candidate to arrive
+    error_to_return: Optional[str] = None
 
-            if i == 0:
-                # First run: compare against baseline for correctness
-                if not compare_result_sets(base["result_data"], cand["result_data"]):
-                    return (
-                        "Result set mismatch: candidate plan output does not match "
-                        "baseline plan output."
+    # Serialize locally (single machine) to bound resource use; Modal isolates
+    # each EXECUTE in its own sandbox so it runs them concurrently. The
+    # determinism check still runs all N candidate executions either way —
+    # multi-partition execution can be non-deterministic regardless of backend.
+    pool_workers = 1 if exec_local else n_total
+    pool = ThreadPoolExecutor(max_workers=pool_workers)
+    futures = []
+    try:
+        futures.append(pool.submit(_submit_one, "base", baseline_plan_str))
+        for _ in range(n_determinism_retries):
+            futures.append(pool.submit(_submit_one, "cand", candidate_plan_str))
+
+        for fut in as_completed(futures):
+            try:
+                kind, r = fut.result()
+            except Exception as exc:
+                error_to_return = f"Validation failed: {exc}"
+                break
+
+            if not r or r.get("error"):
+                if kind == "base":
+                    error_to_return = (
+                        f"Baseline execution failed: {(r or {}).get('error', 'Unknown error')}"
                     )
-                first_cand_data = cand.pop("result_data")
-                base.pop("result_data", None)
-            else:
-                # Subsequent runs: compare against first run for determinism
-                if not compare_result_sets(first_cand_data, cand["result_data"]):
-                    return (
-                        "Non-deterministic plan: candidate plan produced different "
-                        "results across executions."
+                else:
+                    error_to_return = (
+                        f"Candidate execution failed: {(r or {}).get('error', 'Unknown error')}"
                     )
-                cand.pop("result_data", None)
+                break
 
-        return None
+            if kind == "base":
+                if primary_cand_data is not None:
+                    # A candidate already became primary -> correctness compare now.
+                    if not compare_result_sets(r["result_data"], primary_cand_data):
+                        error_to_return = (
+                            "Result set mismatch: candidate plan output does not match "
+                            "baseline plan output."
+                        )
+                        r.pop("result_data", None)
+                        break
+                    r.pop("result_data", None)
+                else:
+                    # Stash baseline; correctness compare deferred to first cand arrival.
+                    baseline_data = r["result_data"]
+                    r.pop("result_data", None)
+            else:  # kind == "cand"
+                if primary_cand_data is None:
+                    # First candidate to arrive becomes the determinism reference.
+                    primary_cand_data = r["result_data"]
+                    r.pop("result_data", None)
+                    if baseline_data is not None:
+                        if not compare_result_sets(baseline_data, primary_cand_data):
+                            error_to_return = (
+                                "Result set mismatch: candidate plan output does not match "
+                                "baseline plan output."
+                            )
+                            baseline_data = None
+                            break
+                        baseline_data = None  # drop baseline ref after correctness check
+                else:
+                    # Subsequent candidates: determinism check vs the primary.
+                    if not compare_result_sets(primary_cand_data, r["result_data"]):
+                        error_to_return = (
+                            "Non-deterministic plan: candidate plan produced different "
+                            "results across executions."
+                        )
+                        r.pop("result_data", None)
+                        break
+                    r.pop("result_data", None)
 
-    except Exception as exc:
-        return f"Validation failed: {exc}"
+        return error_to_return
 
     finally:
-        first_cand_data = None
-        if isinstance(cand, dict):
-            cand.pop("result_data", None)
-        if isinstance(base, dict):
-            base.pop("result_data", None)
+        # Drop any remaining payload refs, and best-effort cancel pending
+        # futures. In-flight Modal sandboxes finish in the background and
+        # self-clean via their sandbox_timeout; we don't block on them.
+        baseline_data = None
+        primary_cand_data = None
+        for fut in futures:
+            fut.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 # ModalRunner cache — avoids repeated modal.App.lookup() and image definition
@@ -164,12 +229,35 @@ def _get_runner(app_name: str, runner_kwargs: dict) -> ModalRunner:
             _runner_cache[key] = ModalRunner(app_name, **runner_kwargs)
         return _runner_cache[key]
 
+
+# LocalRunner singleton — the local analog of a cached ModalRunner. LocalRunner
+# holds no per-call state (cpu is derived per run_operation, each call builds a
+# fresh DataFusionDB), so one shared instance is enough and is safe to call from
+# many threads. Imported here so the Modal path never requires the ``local`` extra.
+_local_runner = None
+_local_runner_lock = threading.Lock()
+
+def _get_local_runner() -> "LocalRunner":
+    """Return the shared LocalRunner, creating it on first use."""
+    global _local_runner
+    with _local_runner_lock:
+        if _local_runner is None:
+            try:
+                from modal_controller.local_runner import LocalRunner
+            except ImportError as exc:
+                raise ImportError(
+                    "Local execution requires the patched DataFusion engine. "
+                    "Install it with `uv sync --extra local` (see README)."
+                ) from exc
+            _local_runner = LocalRunner()
+        return _local_runner
+
 # Protects the scheduling state
 _REMOTE_SCHED_LOCK = threading.Lock()
 _SANDBOX_SEM = threading.Semaphore(MAX_CONCURRENT_SANDBOXES)
 _latest_scheduled_start = 0.0  # monotonic time
 
-def _gate_modal_start():
+def _gate_modal_start() -> None:
     """Rate-limit Modal sandbox starts to at most RATE_LIMIT_PER_SEC per second."""
     global _latest_scheduled_start
 
@@ -190,29 +278,53 @@ def submit_run_operation(
     n_retry: int = 2,
     runner_kwargs: dict | None = None,
     verbose: bool = True,
+    exec_local: bool = False,
     **kwargs
-):
-    """Run an operation on Modal with rate limiting, retries, and error mapping.
+) -> dict:
+    """Run an operation on Modal (or locally) with retries and error mapping.
 
-    Creates a ModalRunner sandbox, executes the operation, retrieves the
-    result from S3, and retries on transient errors (up to *n_retry* times).
+    When *exec_local* is True, runs the operation in-process via
+    :class:`LocalRunner` (no Modal sandbox or S3). Otherwise creates a
+    ModalRunner sandbox, executes the operation, retrieves the result from
+    S3, and retries on transient errors (up to *n_retry* times).
 
     Args:
         operation: Operation type (PLAN, VALIDATE, EXECUTE, EVALUATE, FETCH_SCHEMA).
         input_str: Input string (SQL query or plan JSON).
-        data_folder: Modal-side data directory.
-        n_retry: Max retry attempts on transient errors.
-        runner_kwargs: Extra kwargs for ModalRunner constructor.
+        data_folder: Data directory (Modal-side path or local path).
+        n_retry: Max retry attempts on transient errors (Modal path only;
+            local execution is deterministic and runs once).
+        runner_kwargs: Extra kwargs for the ModalRunner constructor. Ignored
+            when *exec_local* is True (the local data folder is the authority).
         verbose: Print retry messages.
-        **kwargs: Forwarded to ``ModalRunner.run_operation``.
+        exec_local: If True, run in-process via LocalRunner.
+        **kwargs: Forwarded to the runner's ``run_operation`` (Modal). For the
+            local path, ``cpu`` sets DataFusion parallelism and
+            ``full_metrics``/``include_sample_rows`` (directly or via
+            ``sandbox_placeholders``) are translated to LocalRunner params.
 
     Returns:
-        Result dict from S3, or ``{"error": ...}`` on failure.
+        Result dict, or ``{"error": ...}`` on failure.
     """
+    if exec_local:
+        # Local execution is deterministic (no remote sandbox), so there are no
+        # transient failures to retry — run once via the shared LocalRunner.
+        # kwargs are forwarded as-is, exactly like the Modal path's
+        # runner.run_operation(**kwargs); LocalRunner reads what it understands
+        # (cpu, sandbox_placeholders, full_metrics, include_sample_rows) and
+        # ignores the Modal-only rest.
+        return _get_local_runner().run_operation(
+            operation=operation,
+            input_str=input_str,
+            data_folder=data_folder,
+            **kwargs,
+        )
+
     if runner_kwargs is None:
         runner_kwargs = {}
-        
-    def run_attempt():
+
+    def run_attempt() -> dict | str:
+        """Run sandbox and return UUID string on success, or error dict on failure."""
         runner = _get_runner(SANDBOX_NAME, runner_kwargs or {})
         try:
             uuid = runner.run_operation(
@@ -224,7 +336,9 @@ def submit_run_operation(
         except Exception as exc:
             return {"error": str(exc)}
 
-        return read_uuid_result(operation, uuid=uuid)
+        if uuid is None:
+            return {"error": "No UUID found in output."}
+        return uuid
 
     if n_retry < 0:
         raise ValueError("n_retry must be non-negative")
@@ -234,18 +348,25 @@ def submit_run_operation(
         if i > 0:
             time.sleep(min(2 ** i, 10))  # ~exponential backoff
 
+        # Semaphore caps concurrent Modal sandboxes; rate gate inside it
+        # spaces consecutive starts by >= 1/RATE_LIMIT_PER_SEC.
         with _SANDBOX_SEM:
-            _gate_modal_start()  # ensures consecutive Modal starts are spaced by >= 1/RATE_LIMIT_PER_SEC
-            result = run_attempt()
-        
+            _gate_modal_start()
+            uuid_or_error = run_attempt()
+
+        # S3 result fetch happens OUTSIDE the semaphore — no need to hold
+        # a sandbox slot while waiting on an HTTP call to AWS.
+        if isinstance(uuid_or_error, str):
+            result = read_uuid_result(operation, uuid=uuid_or_error)
+        else:
+            result = uuid_or_error
+
         if result and not result.get("error", None):
             break
-        
+
         if not result:
             if i == n_retry:
                 return {"error": "No result returned from operation after retries."}
-            # if verbose:
-            #     print("Retrying operation due to no result returned.")
             continue
 
         if i == n_retry: # final attempt, don't retry again
@@ -253,10 +374,8 @@ def submit_run_operation(
 
         error_kw = next((kw for kw in RETRY_DEFAULT_ERROR_KWS if kw in result.get("error", "")), None)
         if error_kw and (not error_kw in RETRY_ONLY_ONCE or i == 0):
-            # if verbose:
-            #     print(f"Retrying operation due to error: {result.get('error', '')}")
             continue
-        
+
         break
     
     if result and result.get("error", None):
@@ -323,6 +442,7 @@ def evaluate_plan_n_runs(
     n_runs: int = 1,
     max_eval_workers: int = 8,
     runner_kwargs: dict | None = None,
+    exec_local: bool = False,
     **kwargs
 ) -> dict:
     """Execute a plan *n_runs* times concurrently and aggregate metrics.
@@ -333,10 +453,11 @@ def evaluate_plan_n_runs(
     Args:
         operation: Operation type (typically EVALUATE).
         plan_json: Plan JSON string to execute.
-        data_folder: Modal-side data directory.
+        data_folder: Data directory (Modal-side or local).
         n_runs: Number of evaluation runs (must be >= 1).
         max_eval_workers: Max concurrent evaluation workers.
         runner_kwargs: Extra kwargs for ModalRunner.
+        exec_local: If True, run in-process via LocalRunner.
         **kwargs: Forwarded to ``submit_run_operation``.
 
     Returns:
@@ -368,11 +489,16 @@ def evaluate_plan_n_runs(
 
     def run_single_evaluation(run_id: int) -> tuple[int, dict | None, str | None]:
         try:
+            # Eval/timing path uses the submit_run_operation default (n_retry=2)
+            # because R=n_runs redundancy absorbs transient flakes. The
+            # validation/determinism path overrides this to n_retry=5 because
+            # those EXECUTEs are one-shot with no replay below them.
             result = submit_run_operation(
                 operation=operation,
                 input_str=plan_json,
                 data_folder=data_folder,
                 runner_kwargs=runner_kwargs,
+                exec_local=exec_local,
                 **kwargs,
             )
 
@@ -389,7 +515,12 @@ def evaluate_plan_n_runs(
 
     total_successful_runs: int = 0
 
-    with ThreadPoolExecutor(max_workers=max_eval_workers) as executor:
+    # Local execution shares one machine, so concurrent runs contend for CPU and
+    # corrupt the timing they are meant to measure. Run them serially when local;
+    # Modal isolates each run in its own sandbox, so it keeps full concurrency.
+    eval_workers = 1 if exec_local else max_eval_workers
+
+    with ThreadPoolExecutor(max_workers=eval_workers) as executor:
         future_to_id = {executor.submit(run_single_evaluation, i + 1): i + 1 for i in range(n_runs)}
 
         for future in as_completed(future_to_id):
